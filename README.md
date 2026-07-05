@@ -36,6 +36,8 @@ Stage 1 context is deterministic: current raw message, up to the last 12 message
 
 Stage 2 uses the same base context, then adds full content only for selected validated `MemoryItems`.
 
+Stage 1 returns a structured decision: answer directly or request selected memory ids.
+
 There is no free-form summary in the context. Closed tracks do not leak their dialogue tail into new active tracks. All `dialogue_turns` remain stored in SQLite.
 
 ## DB Path
