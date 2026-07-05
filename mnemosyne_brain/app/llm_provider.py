@@ -34,7 +34,11 @@ STAGE1_SYSTEM_PROMPT = (
     '"rationale":null}. '
     'If answering directly, use decision_type="answer_directly", keep selected_memory_ids empty, '
     "and put the user-facing answer in draft_answer. "
-    'If memory is needed, use decision_type="request_memory" and selected_memory_ids must be non-empty.'
+    'If memory_manifest is empty, use decision_type="answer_directly". '
+    'Never choose decision_type="request_memory" with empty selected_memory_ids. '
+    'Only choose decision_type="request_memory" when selected_memory_ids contains at least one memory_id copied exactly from memory_manifest. '
+    'For questions about recent conversation history, such as "what did I just ask" or "what did I just say", use recent_messages and answer_directly. '
+    'If the answer can be produced from current_user_message and recent_messages, use answer_directly.'
 )
 STAGE2_SYSTEM_PROMPT = (
     "Return one JSON object only for Stage 2. "

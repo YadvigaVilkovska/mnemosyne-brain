@@ -108,13 +108,20 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertEqual("test_model", transport.calls[0]["payload"]["model"])
         self.assertEqual({"type": "json_object"}, transport.calls[0]["payload"]["response_format"])
 
-    def test_stage1_prompt_rejects_wrapped_contract_and_names_required_fields(self) -> None:
+    def test_stage1_prompt_rejects_wrapped_contract_and_includes_memory_selection_rules(self) -> None:
         provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("Do not wrap in Stage1Decision", prompt)
         self.assertIn("decision_type", prompt)
         self.assertIn("draft_answer", prompt)
+        self.assertIn("If memory_manifest is empty, use decision_type=\"answer_directly\"", prompt)
+        self.assertIn("Never choose decision_type=\"request_memory\" with empty selected_memory_ids", prompt)
+        self.assertIn(
+            "selected_memory_ids contains at least one memory_id copied exactly from memory_manifest",
+            prompt,
+        )
+        self.assertIn("recent_messages and answer_directly", prompt)
 
     def test_stage2_valid_fake_http_response_returns_decision(self) -> None:
         provider, transport = self._provider(
