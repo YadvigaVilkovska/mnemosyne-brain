@@ -19,12 +19,35 @@ LLM_MODEL_ENV = "MNEMOSYNE_LLM_MODEL"
 CHAT_COMPLETIONS_PATH = "/chat/completions"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 STAGE1_SYSTEM_PROMPT = (
-    "Return only strict JSON matching Stage1Decision. "
-    "Do not include markdown, explanations, or a summary key."
+    "Return one JSON object only for Stage 1. "
+    "Do not wrap in Stage1Decision. "
+    "Do not return prose. "
+    "Do not use markdown. "
+    "Do not include summary. "
+    "Allowed JSON shape: "
+    '{"decision_type":"answer_directly|request_memory",'
+    '"selected_memory_ids":[],'
+    '"draft_answer":null,'
+    '"extracted_facts":[],'
+    '"memory_candidates":[],'
+    '"rationale":null}. '
+    'If answering directly, use decision_type="answer_directly", keep selected_memory_ids empty, '
+    "and put the user-facing answer in draft_answer. "
+    'If memory is needed, use decision_type="request_memory" and selected_memory_ids must be non-empty.'
 )
 STAGE2_SYSTEM_PROMPT = (
-    "Return only strict JSON matching Stage2Decision. "
-    "Do not include markdown, explanations, or a summary key."
+    "Return one JSON object only for Stage 2. "
+    "Do not wrap in Stage2Decision. "
+    "Do not return prose. "
+    "Do not use markdown. "
+    "Do not include summary. "
+    "Allowed JSON shape: "
+    '{"final_answer":"",'
+    '"extracted_facts":[],'
+    '"memory_candidates":[],'
+    '"used_memory_ids":[],'
+    '"rationale":null}. '
+    "Put the final user-facing answer in final_answer."
 )
 
 DecisionModel = TypeVar("DecisionModel", Stage1Decision, Stage2Decision)
