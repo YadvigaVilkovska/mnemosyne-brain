@@ -10,7 +10,9 @@ from collections.abc import Sequence
 
 from .api.user_message import handle_user_message
 from .config import load_config, load_project_env
-from .contracts.base import new_id
+from .contracts.base import new_id, server_now
+from .contracts.memory import MemoryCandidate
+from .contracts.provenance import Provenance
 from .db.migrate import run_migrations
 from .db.repository import SqliteRepository
 from .graph.graph import build_graph
@@ -117,6 +119,14 @@ def run_llm_message(message: str, repository: SqliteRepository, thread_id: str |
             target_id=track.track_id,
             payload=analysis_payload,
         )
+        for candidate in build_llm_memory_candidates(
+            result,
+            repository=repository,
+            dialogue_id=track.dialogue_id,
+            track_id=track.track_id,
+            turn_id=user_turn.turn_id,
+        ):
+            repository.persist_memory_candidate(candidate)
     return {
         "dialogue_id": track.dialogue_id,
         "thread_id": track.thread_id,
@@ -125,6 +135,87 @@ def run_llm_message(message: str, repository: SqliteRepository, thread_id: str |
         "capsule_id": None,
         "response": result["answer"],
     }
+
+
+def build_llm_memory_candidates(
+    result: dict,
+    *,
+    repository: SqliteRepository,
+    dialogue_id: str,
+    track_id: str,
+    turn_id: str,
+) -> list[MemoryCandidate]:
+    """Convert valid raw LLM memory candidates into durable candidate rows."""
+
+    candidates: list[MemoryCandidate] = []
+    for raw_candidate in iter_raw_llm_memory_candidates(result):
+        candidate_type = raw_candidate.get("candidate_type")
+        content_json = raw_candidate.get("content")
+        confidence = raw_candidate.get("confidence")
+        if not isinstance(candidate_type, str) or not candidate_type.strip():
+            continue
+        if not isinstance(content_json, dict):
+            continue
+        if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+            continue
+        if not 0.0 <= float(confidence) <= 1.0:
+            continue
+
+        recommended_action = raw_candidate.get("recommended_action")
+        if recommended_action not in {"stage", "save_immediately"}:
+            recommended_action = "stage"
+
+        normalized_type = candidate_type.strip()
+        now = server_now()
+        candidates.append(
+            MemoryCandidate(
+                candidate_id=new_id("cand"),
+                dialogue_id=dialogue_id,
+                track_id=track_id,
+                turn_id=turn_id,
+                candidate_type=normalized_type,
+                recommended_action=recommended_action,
+                confidence=float(confidence),
+                dedupe_key=repository.stable_key("llm_memory_candidate", normalized_type, content_json),
+                idempotency_key=repository.stable_key(
+                    "llm_memory_candidate",
+                    track_id,
+                    turn_id,
+                    normalized_type,
+                    content_json,
+                ),
+                content_json=content_json,
+                provenance_json=Provenance(
+                    source="llm",
+                    dialogue_id=dialogue_id,
+                    track_id=track_id,
+                    turn_id=turn_id,
+                ),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    return candidates
+
+
+def iter_raw_llm_memory_candidates(result: dict) -> list[dict]:
+    """Return raw LLM memory candidates from Stage 1 and Stage 2 in order."""
+
+    raw_candidates: list[dict] = []
+    stage1_decision = result["stage1_decision"]
+    raw_candidates.extend(
+        candidate
+        for candidate in stage1_decision.get("memory_candidates", [])
+        if isinstance(candidate, dict)
+    )
+    stage2_decision = result["stage2_decision"]
+    if stage2_decision is not None:
+        raw_candidates.extend(
+            candidate
+            for candidate in stage2_decision.get("memory_candidates", [])
+            if isinstance(candidate, dict)
+        )
+    return raw_candidates
 
 
 def build_llm_analysis_payload(result: dict) -> dict:
