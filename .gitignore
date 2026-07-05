@@ -1,0 +1,17 @@
+.env
+*.sqlite
+*.sqlite3
+*.db
+*.pem
+*.key
+id_rsa
+id_ed25519
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
