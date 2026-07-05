@@ -30,6 +30,13 @@ python3 -m mnemosyne_brain.app.run_demo
 python3 -m mnemosyne_brain.app.cli "Remember that Pav loves architecture diagrams"
 ```
 
+## Debug LLM Context
+
+```bash
+python3 -m mnemosyne_brain.app.context_debug stage1 --track-id <track_id> --message "test message"
+python3 -m mnemosyne_brain.app.context_debug stage2 --track-id <track_id> --message "test message" --memory-id mem_1 --memory-id mem_2
+```
+
 ## LLM Context Policy v0.4.3
 
 Stage 1 context is deterministic: current raw message, up to the last 12 messages from the current active track, previous track analysis, pinned exact messages, and a memory manifest.
