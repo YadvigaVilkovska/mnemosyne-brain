@@ -8,7 +8,7 @@ import sqlite3
 from collections.abc import Sequence
 
 from .api.user_message import handle_user_message
-from .config import load_config
+from .config import load_config, load_project_env
 from .contracts.base import new_id
 from .db.migrate import run_migrations
 from .db.repository import SqliteRepository
@@ -51,6 +51,7 @@ def run_message(message: str, thread_id: str | None = None) -> dict:
 def llm_env_is_configured() -> bool:
     """Return true only when all required LLM provider variables are present."""
 
+    load_project_env()
     return all(os.environ.get(name, "").strip() for name in REQUIRED_LLM_ENV_VARS)
 
 

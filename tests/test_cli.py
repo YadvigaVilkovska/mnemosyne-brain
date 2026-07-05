@@ -13,7 +13,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from mnemosyne_brain.app.cli import main
+from mnemosyne_brain.app.cli import llm_env_is_configured, main
 from mnemosyne_brain.app.llm_provider import ProviderResponseError
 
 
@@ -92,6 +92,22 @@ class CliTestCase(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertIn("Assistant: Provider answer from env file.", rendered)
         self.assertEqual(1, calls["provider_from_env"])
+
+    def test_llm_env_is_configured_reads_project_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, ".env").write_text(
+                "\n".join(
+                    [
+                        "MNEMOSYNE_LLM_BASE_URL=https://llm.example.test/v1",
+                        "MNEMOSYNE_LLM_API_KEY=env_file_key",
+                        "MNEMOSYNE_LLM_MODEL=test_model",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with self._working_directory(temp_dir):
+                with patch.dict(os.environ, {}, clear=True):
+                    self.assertTrue(llm_env_is_configured())
 
     def test_existing_process_env_overrides_project_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
