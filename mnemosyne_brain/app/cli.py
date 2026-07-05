@@ -148,6 +148,7 @@ def build_llm_memory_candidates(
     """Convert valid raw LLM memory candidates into durable candidate rows."""
 
     candidates: list[MemoryCandidate] = []
+    seen_dedupe_keys = list_existing_track_candidate_dedupe_keys(repository, track_id)
     for raw_candidate in iter_raw_llm_memory_candidates(result):
         candidate_type = raw_candidate.get("candidate_type")
         content_json = raw_candidate.get("content")
@@ -166,6 +167,10 @@ def build_llm_memory_candidates(
             recommended_action = "stage"
 
         normalized_type = candidate_type.strip()
+        dedupe_key = repository.stable_key("llm_memory_candidate", normalized_type, content_json)
+        if dedupe_key in seen_dedupe_keys:
+            continue
+        seen_dedupe_keys.add(dedupe_key)
         now = server_now()
         candidates.append(
             MemoryCandidate(
@@ -176,7 +181,7 @@ def build_llm_memory_candidates(
                 candidate_type=normalized_type,
                 recommended_action=recommended_action,
                 confidence=float(confidence),
-                dedupe_key=repository.stable_key("llm_memory_candidate", normalized_type, content_json),
+                dedupe_key=dedupe_key,
                 idempotency_key=repository.stable_key(
                     "llm_memory_candidate",
                     track_id,
@@ -196,6 +201,24 @@ def build_llm_memory_candidates(
             )
         )
     return candidates
+
+
+def list_existing_track_candidate_dedupe_keys(repository: SqliteRepository, track_id: str) -> set[str]:
+    """Return existing semantic candidate dedupe keys for one track."""
+
+    rows = repository.connection.execute(
+        """
+        SELECT dedupe_key
+        FROM memory_candidates
+        WHERE track_id = ?
+        """,
+        (track_id,),
+    ).fetchall()
+    return {
+        row[0]
+        for row in rows
+        if row and isinstance(row[0], str) and row[0]
+    }
 
 
 def iter_raw_llm_memory_candidates(result: dict) -> list[dict]:

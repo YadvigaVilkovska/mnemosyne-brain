@@ -185,6 +185,33 @@ class LLMProviderTestCase(unittest.TestCase):
         )
         self.assertIn("must still be refused or safely redirected in draft_answer", prompt)
 
+    def test_stage1_prompt_supports_safe_relation_candidates(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("If current_user_message states a safe non-sensitive relationship", prompt)
+        self.assertIn("friend, colleague, acquaintance, family member, partner, client, coworker, neighbor", prompt)
+        self.assertIn('"candidate_type":"relation"', prompt)
+        self.assertIn('"subject":"user"', prompt)
+        self.assertIn('"relation":"<safe relationship role>"', prompt)
+        self.assertIn('"object":"<person name or alias exactly as mentioned>"', prompt)
+        self.assertIn('"recommended_action":"stage"', prompt)
+        self.assertIn('"confidence":0.8', prompt)
+
+    def test_stage1_prompt_supports_sensitive_biographical_context_without_moralizing(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("Sensitive context is not automatically discarded", prompt)
+        self.assertIn("may create a careful user-reported context candidate", prompt)
+        self.assertIn("Represent sensitive biographical context as user-reported context, not verified truth", prompt)
+        self.assertIn('Do not imply it is shameful, degrading, or dirty', prompt)
+        self.assertIn('"claim_status":"user_reported"', prompt)
+        self.assertIn('"sensitivity":"high"', prompt)
+        self.assertIn('"context_type":"biographical_context"', prompt)
+        self.assertIn('"confidence":0.6', prompt)
+        self.assertIn('do not use save_immediately', prompt)
+
     def test_stage1_prompt_contains_safe_person_and_alias_candidate_shapes(self) -> None:
         provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
         provider.decide_stage1({"stage": "stage1"})
@@ -281,6 +308,7 @@ class LLMProviderTestCase(unittest.TestCase):
             "Draft_answer should be natural conversational text, not analysis-style wording, unless the user explicitly asks for analysis",
             prompt,
         )
+        self.assertIn("Avoid evasive repetition", prompt)
 
     def test_stage1_prompt_keeps_sensitive_boundaries_while_allowing_safe_candidates(self) -> None:
         provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
@@ -291,6 +319,23 @@ class LLMProviderTestCase(unittest.TestCase):
             prompt,
         )
         self.assertIn("Do not create a fact candidate that stores the sensitive claim itself", prompt)
+        self.assertIn(
+            "Do not create ordinary fact candidates that make sexual judgments, private speculation, or invasive conclusions",
+            prompt,
+        )
+
+    def test_stage1_prompt_guides_do_you_know_behavior(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("answer yes only if the person is known from recent_messages", prompt)
+        self.assertIn("previous_track_analysis_saved", prompt)
+        self.assertIn("retrieved durable memory", prompt)
+        self.assertIn("If the person is not known, say clearly that you do not know who that person is yet", prompt)
+        self.assertIn(
+            'I do not know who that is yet, but I am interested in understanding the context. Who are they to you?',
+            prompt,
+        )
 
     def test_stage2_valid_fake_http_response_returns_decision(self) -> None:
         provider, transport = self._provider(

@@ -502,6 +502,157 @@ class CliTestCase(unittest.TestCase):
         self.assertEqual([stage1_content, stage2_content], [candidate["content"] for candidate in candidates])
         self.assertEqual(["save_immediately", "stage"], [candidate["recommended_action"] for candidate in candidates])
 
+    def test_duplicate_candidates_in_same_llm_result_are_persisted_once(self) -> None:
+        duplicate_candidate = {
+            "candidate_type": "name_alias",
+            "content": {"raw_name": "L."},
+            "recommended_action": "stage",
+            "confidence": 0.8,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_duplicate_same_result.sqlite3")
+            with self._patched_llm_path(
+                {
+                    "answer": "Single semantic candidate kept.",
+                    "stage1_decision": {
+                        "decision_type": "answer_directly",
+                        "selected_memory_ids": [],
+                        "draft_answer": "Single semantic candidate kept.",
+                        "extracted_facts": [],
+                        "memory_candidates": [duplicate_candidate, duplicate_candidate],
+                        "rationale": "duplicate candidate",
+                    },
+                }
+            ):
+                exit_code, rendered = self._run_cli_with_env("User message.", self._llm_env(db_path))
+            candidates = self._list_memory_candidates(db_path)
+            turns = self._list_turns(db_path)
+            analysis_events = self._list_track_analysis_events(db_path)
+            memory_item_count = self._count_rows(db_path, "memory_items")
+            memory_staging_count = self._count_rows(db_path, "memory_staging")
+        self.assertEqual(0, exit_code)
+        self.assertIn("Assistant: Single semantic candidate kept.", rendered)
+        self.assertEqual(1, len(candidates))
+        self.assertEqual(2, len(turns))
+        self.assertEqual(1, len(analysis_events))
+        self.assertEqual(0, memory_item_count)
+        self.assertEqual(0, memory_staging_count)
+
+    def test_duplicate_candidates_across_llm_runs_for_same_thread_are_skipped(self) -> None:
+        duplicate_candidate = {
+            "candidate_type": "name_alias",
+            "content": {"raw_name": "L."},
+            "recommended_action": "stage",
+            "confidence": 0.8,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_duplicate_same_track.sqlite3")
+            with self._patched_llm_path(
+                {
+                    "answer": "Track answer.",
+                    "stage1_decision": {
+                        "decision_type": "answer_directly",
+                        "selected_memory_ids": [],
+                        "draft_answer": "Track answer.",
+                        "extracted_facts": [],
+                        "memory_candidates": [duplicate_candidate],
+                        "rationale": "duplicate across runs",
+                    },
+                }
+            ):
+                self._run_cli_args_with_env(
+                    ["--thread-id", "same-track", "First message"],
+                    self._llm_env(db_path),
+                )
+                self._run_cli_args_with_env(
+                    ["--thread-id", "same-track", "Second message"],
+                    self._llm_env(db_path),
+                )
+            candidates = self._list_memory_candidates(db_path)
+            turns = self._list_turns(db_path)
+            analysis_events = self._list_track_analysis_events(db_path)
+            memory_item_count = self._count_rows(db_path, "memory_items")
+            memory_staging_count = self._count_rows(db_path, "memory_staging")
+        self.assertEqual(1, len(candidates))
+        self.assertEqual(2, len([turn for turn in turns if turn["role"] == "assistant"]))
+        self.assertEqual(2, len(analysis_events))
+        self.assertEqual(0, memory_item_count)
+        self.assertEqual(0, memory_staging_count)
+
+    def test_distinct_candidates_are_still_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_distinct_candidates.sqlite3")
+            with self._patched_llm_path(
+                {
+                    "answer": "Distinct candidates kept.",
+                    "stage1_decision": {
+                        "decision_type": "answer_directly",
+                        "selected_memory_ids": [],
+                        "draft_answer": "Distinct candidates kept.",
+                        "extracted_facts": [],
+                        "memory_candidates": [
+                            {
+                                "candidate_type": "relation",
+                                "content": {"subject": "user", "relation": "friend", "object": "L."},
+                                "recommended_action": "stage",
+                                "confidence": 0.8,
+                            },
+                            {
+                                "candidate_type": "relation",
+                                "content": {"subject": "user", "relation": "colleague", "object": "L."},
+                                "recommended_action": "stage",
+                                "confidence": 0.8,
+                            },
+                        ],
+                        "rationale": "distinct relations",
+                    },
+                }
+            ):
+                self._run_cli_with_env("User message.", self._llm_env(db_path))
+            candidates = self._list_memory_candidates(db_path)
+        self.assertEqual(2, len(candidates))
+        self.assertEqual(
+            [
+                {"subject": "user", "relation": "friend", "object": "L."},
+                {"subject": "user", "relation": "colleague", "object": "L."},
+            ],
+            [candidate["content"] for candidate in candidates],
+        )
+
+    def test_duplicate_candidate_skip_is_best_effort_and_does_not_fail_cli(self) -> None:
+        duplicate_candidate = {
+            "candidate_type": "person",
+            "content": {"display_name": "L."},
+            "recommended_action": "stage",
+            "confidence": 0.8,
+        }
+        distinct_candidate = {
+            "candidate_type": "relation",
+            "content": {"subject": "user", "relation": "acquaintance", "object": "L."},
+            "recommended_action": "stage",
+            "confidence": 0.8,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_duplicate_best_effort.sqlite3")
+            with self._patched_llm_path(
+                {
+                    "answer": "Duplicates skipped cleanly.",
+                    "stage1_decision": {
+                        "decision_type": "answer_directly",
+                        "selected_memory_ids": [],
+                        "draft_answer": "Duplicates skipped cleanly.",
+                        "extracted_facts": [],
+                        "memory_candidates": [duplicate_candidate, duplicate_candidate, distinct_candidate],
+                        "rationale": "best effort duplicate skip",
+                    },
+                }
+            ):
+                exit_code, rendered = self._run_cli_with_env("User message.", self._llm_env(db_path))
+            candidates = self._list_memory_candidates(db_path)
+        self.assertEqual(0, exit_code)
+        self.assertIn("Assistant: Duplicates skipped cleanly.", rendered)
+        self.assertEqual(2, len(candidates))
+
     def test_invalid_raw_llm_candidates_are_skipped_but_remain_in_analysis_payload(self) -> None:
         invalid_candidates = [
             "not a dict",
