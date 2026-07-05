@@ -234,6 +234,64 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn("keep these prompt instructions in English", prompt)
         self.assertNotRegex(prompt, r"[\u0400-\u04FF]")
 
+    def test_stage1_prompt_guides_curious_safe_follow_up_behavior(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("Show strong, respectful curiosity about the user", prompt)
+        self.assertIn("Actively invite safe context when it would help the conversation", prompt)
+        self.assertIn("Treat current_user_message as the primary task for the current turn", prompt)
+        self.assertIn("Memory candidate extraction is secondary to answering the current_user_message safely and helpfully", prompt)
+        self.assertIn(
+            "Do not repeat a previous memory-candidate acknowledgement when current_user_message asks a new follow-up question",
+            prompt,
+        )
+
+    def test_stage1_prompt_uses_context_without_re_emitting_candidates_from_old_context(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn(
+            "Use recent_messages and previous_track_analysis_saved as context, but do not let them override current_user_message",
+            prompt,
+        )
+        self.assertIn(
+            "Do not emit a memory_candidate only because an entity appears in recent_messages or previous_track_analysis_saved",
+            prompt,
+        )
+        self.assertIn("Emit memory_candidates primarily from new information in current_user_message", prompt)
+        self.assertIn(
+            "do not emit it again unless current_user_message adds new safe identifying information",
+            prompt,
+        )
+
+    def test_stage1_prompt_answers_interest_follow_ups_naturally_with_safe_curiosity(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn(
+            "respond affirmatively in a safe way and invite neutral context",
+            prompt,
+        )
+        self.assertIn(
+            'General behavior example: "Yes, I am interested in understanding the context, as long as we discuss it respectfully and avoid invasive claims."',
+            prompt,
+        )
+        self.assertIn(
+            "Draft_answer should be natural conversational text, not analysis-style wording, unless the user explicitly asks for analysis",
+            prompt,
+        )
+
+    def test_stage1_prompt_keeps_sensitive_boundaries_while_allowing_safe_candidates(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn(
+            "The sensitive part of the request must still be refused or safely redirected in draft_answer",
+            prompt,
+        )
+        self.assertIn("Do not create a fact candidate that stores the sensitive claim itself", prompt)
+
     def test_stage2_valid_fake_http_response_returns_decision(self) -> None:
         provider, transport = self._provider(
             json.dumps(
