@@ -97,6 +97,7 @@ def run_llm_message(message: str, repository: SqliteRepository, thread_id: str |
     adapter = OpenAICompatibleLLMProvider.from_env()
     orchestrator = DeterministicLLMOrchestrator(repository, adapter)
     result = orchestrator.run_turn(track.track_id, message, exclude_turn_id=user_turn.turn_id)
+    analysis_payload = build_llm_analysis_payload(result)
     with repository.transaction():
         assistant_turn, _created = repository.persist_dialogue_turn(
             dialogue_id=track.dialogue_id,
@@ -106,6 +107,16 @@ def run_llm_message(message: str, repository: SqliteRepository, thread_id: str |
             role="assistant",
             content_text=result["answer"],
         )
+        repository.insert_audit_event(
+            event_type="track_analysis_saved",
+            actor_type="llm",
+            dialogue_id=track.dialogue_id,
+            track_id=track.track_id,
+            turn_id=assistant_turn.turn_id,
+            target_type="dialogue_track",
+            target_id=track.track_id,
+            payload=analysis_payload,
+        )
     return {
         "dialogue_id": track.dialogue_id,
         "thread_id": track.thread_id,
@@ -113,6 +124,27 @@ def run_llm_message(message: str, repository: SqliteRepository, thread_id: str |
         "turn_id": assistant_turn.turn_id,
         "capsule_id": None,
         "response": result["answer"],
+    }
+
+
+def build_llm_analysis_payload(result: dict) -> dict:
+    """Build the track analysis audit payload from a successful LLM result."""
+
+    stage1_decision = result["stage1_decision"]
+    stage2_decision = result["stage2_decision"]
+    extracted_facts = list(stage1_decision.get("extracted_facts", []))
+    memory_candidates = list(stage1_decision.get("memory_candidates", []))
+    if stage2_decision is not None:
+        extracted_facts.extend(stage2_decision.get("extracted_facts", []))
+        memory_candidates.extend(stage2_decision.get("memory_candidates", []))
+    return {
+        "route": result["route"],
+        "selected_memory_ids": list(result.get("selected_memory_ids", [])),
+        "used_memory_ids": list(result.get("used_memory_ids", [])),
+        "stage1_decision": stage1_decision,
+        "stage2_decision": stage2_decision,
+        "extracted_facts": extracted_facts,
+        "memory_candidates": memory_candidates,
     }
 
 

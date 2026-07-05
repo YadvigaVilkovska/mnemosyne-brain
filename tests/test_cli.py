@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import sqlite3
 import tempfile
@@ -296,10 +297,13 @@ class CliTestCase(unittest.TestCase):
             with self._patched_llm_path({"answer": "Assistant answer."}):
                 self._run_cli_with_env("User message.", self._llm_env(db_path))
             turns = self._list_turns(db_path)
+            analysis_events = self._list_track_analysis_events(db_path)
         self.assertEqual(
             [("user", "user", "User message."), ("llm", "assistant", "Assistant answer.")],
             [(turn["input_source"], turn["role"], turn["content_text"]) for turn in turns],
         )
+        self.assertEqual(1, len(analysis_events))
+        self.assertEqual("track_analysis_saved", analysis_events[0]["event_type"])
 
     def test_user_turn_is_persisted_before_orchestrator_runs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -318,12 +322,111 @@ class CliTestCase(unittest.TestCase):
         self.assertEqual(1, len(assistant_turns))
         self.assertIn(f"Track: {assistant_turns[0]['track_id']}", rendered)
 
+    def test_successful_llm_turn_saves_track_analysis_audit_event(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_analysis.sqlite3")
+            with self._patched_llm_path({"answer": "Assistant answer."}):
+                _exit_code, rendered = self._run_cli_with_env("User message.", self._llm_env(db_path))
+            turns = self._list_turns(db_path)
+            analysis_events = self._list_track_analysis_events(db_path)
+        track_id = self._track_from_output(rendered)
+        self.assertEqual(2, len(turns))
+        self.assertEqual(1, len([turn for turn in turns if turn["role"] == "user"]))
+        self.assertEqual(1, len([turn for turn in turns if turn["role"] == "assistant"]))
+        self.assertEqual(1, len(analysis_events))
+        self.assertEqual("llm", analysis_events[0]["actor_type"])
+        self.assertEqual("dialogue_track", analysis_events[0]["target_type"])
+        self.assertEqual(track_id, analysis_events[0]["target_id"])
+        self.assertEqual(track_id, analysis_events[0]["track_id"])
+
+    def test_saved_analysis_payload_contains_required_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_analysis_keys.sqlite3")
+            with self._patched_llm_path({"answer": "Assistant answer."}):
+                self._run_cli_with_env("User message.", self._llm_env(db_path))
+            payload = self._list_track_analysis_events(db_path)[0]["payload"]
+        self.assertEqual(
+            {
+                "route",
+                "selected_memory_ids",
+                "used_memory_ids",
+                "stage1_decision",
+                "stage2_decision",
+                "extracted_facts",
+                "memory_candidates",
+            },
+            set(payload),
+        )
+
+    def test_answer_directly_analysis_uses_stage1_facts_and_candidates(self) -> None:
+        stage1_facts = [{"fact": "stage1_fact"}]
+        stage1_candidates = [{"candidate": "stage1_candidate"}]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_analysis_direct.sqlite3")
+            with self._patched_llm_path(
+                {
+                    "answer": "Direct answer.",
+                    "stage1_decision": {
+                        "decision_type": "answer_directly",
+                        "selected_memory_ids": [],
+                        "draft_answer": "Direct answer.",
+                        "extracted_facts": stage1_facts,
+                        "memory_candidates": stage1_candidates,
+                        "rationale": "enough context",
+                    },
+                }
+            ):
+                self._run_cli_with_env("User message.", self._llm_env(db_path))
+            payload = self._list_track_analysis_events(db_path)[0]["payload"]
+        self.assertEqual("answer_directly", payload["route"])
+        self.assertIsNone(payload["stage2_decision"])
+        self.assertEqual(stage1_facts, payload["extracted_facts"])
+        self.assertEqual(stage1_candidates, payload["memory_candidates"])
+
+    def test_stage2_analysis_combines_facts_and_candidates_in_order(self) -> None:
+        stage1_facts = [{"fact": "stage1_a"}, {"fact": "stage1_b"}]
+        stage2_facts = [{"fact": "stage2_a"}]
+        stage1_candidates = [{"candidate": "stage1_a"}]
+        stage2_candidates = [{"candidate": "stage2_a"}, {"candidate": "stage2_b"}]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_analysis_stage2.sqlite3")
+            with self._patched_llm_path(
+                {
+                    "answer": "Stage 2 answer.",
+                    "route": "used_selected_memory",
+                    "selected_memory_ids": ["mem_1"],
+                    "used_memory_ids": ["mem_1"],
+                    "stage1_decision": {
+                        "decision_type": "request_memory",
+                        "selected_memory_ids": ["mem_1"],
+                        "draft_answer": None,
+                        "extracted_facts": stage1_facts,
+                        "memory_candidates": stage1_candidates,
+                        "rationale": "needs memory",
+                    },
+                    "stage2_decision": {
+                        "final_answer": "Stage 2 answer.",
+                        "extracted_facts": stage2_facts,
+                        "memory_candidates": stage2_candidates,
+                        "used_memory_ids": ["mem_1"],
+                        "rationale": "used memory",
+                    },
+                }
+            ):
+                self._run_cli_with_env("User message.", self._llm_env(db_path))
+            payload = self._list_track_analysis_events(db_path)[0]["payload"]
+        self.assertEqual("used_selected_memory", payload["route"])
+        self.assertIsNotNone(payload["stage2_decision"])
+        self.assertEqual(stage1_facts + stage2_facts, payload["extracted_facts"])
+        self.assertEqual(stage1_candidates + stage2_candidates, payload["memory_candidates"])
+
     def test_assistant_turn_is_not_persisted_if_orchestrator_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "mnemosyne_cli_orchestrator_failure.sqlite3")
             with self._patched_llm_path(error=ProviderResponseError("orchestrator failed")):
                 exit_code, rendered = self._run_cli_with_env("User message.", self._llm_env(db_path))
             turns = self._list_turns(db_path)
+            analysis_events = self._list_track_analysis_events(db_path)
         self.assertEqual(1, exit_code)
         self.assertIn("LLM failed", rendered)
         self.assertIn("user turn saved", rendered)
@@ -332,6 +435,7 @@ class CliTestCase(unittest.TestCase):
         self.assertEqual([("user", "user", "User message.")], [
             (turn["input_source"], turn["role"], turn["content_text"]) for turn in turns
         ])
+        self.assertEqual([], analysis_events)
 
     def test_provider_orchestrator_is_not_called_inside_transaction(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -367,6 +471,7 @@ class CliTestCase(unittest.TestCase):
             ):
                 exit_code, rendered = self._run_cli_with_env("hello", self._llm_env(db_path))
             turns = self._list_turns(db_path)
+            analysis_events = self._list_track_analysis_events(db_path)
         self.assertEqual(1, exit_code)
         self.assertIn("LLM failed", rendered)
         self.assertIn("configured provider failed", rendered)
@@ -376,6 +481,56 @@ class CliTestCase(unittest.TestCase):
         self.assertEqual([("user", "user", "hello")], [
             (turn["input_source"], turn["role"], turn["content_text"]) for turn in turns
         ])
+        self.assertEqual([], analysis_events)
+
+    def test_second_llm_turn_sees_previous_analysis_from_first_successful_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_previous_analysis.sqlite3")
+            first_result = {
+                "answer": "First answer.",
+                "stage1_decision": {
+                    "decision_type": "answer_directly",
+                    "selected_memory_ids": [],
+                    "draft_answer": "First answer.",
+                    "extracted_facts": [{"fact": "first"}],
+                    "memory_candidates": [{"candidate": "first"}],
+                    "rationale": "first turn",
+                },
+            }
+            with self._patched_llm_path(first_result) as calls:
+                self._run_cli_args_with_env(
+                    ["--thread-id", "pav-main", "First message"],
+                    self._llm_env(db_path),
+                )
+                self._run_cli_args_with_env(
+                    ["--thread-id", "pav-main", "Second message"],
+                    self._llm_env(db_path),
+                )
+        self.assertIsNone(calls["previous_analysis_at_run"][0])
+        self.assertIsNotNone(calls["previous_analysis_at_run"][1])
+        self.assertEqual([{"fact": "first"}], calls["previous_analysis_at_run"][1]["extracted_facts"])
+        self.assertEqual([{"candidate": "first"}], calls["previous_analysis_at_run"][1]["memory_candidates"])
+
+    def test_llm_analysis_persistence_does_not_write_memory_pipeline_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_no_memory_writes.sqlite3")
+            with self._patched_llm_path(
+                {
+                    "answer": "Assistant answer.",
+                    "stage1_decision": {
+                        "decision_type": "answer_directly",
+                        "selected_memory_ids": [],
+                        "draft_answer": "Assistant answer.",
+                        "extracted_facts": [{"fact": "observed"}],
+                        "memory_candidates": [{"candidate": "audit only"}],
+                        "rationale": "audit only",
+                    },
+                }
+            ):
+                self._run_cli_with_env("User message.", self._llm_env(db_path))
+            self.assertEqual(0, self._count_rows(db_path, "memory_candidates"))
+            self.assertEqual(0, self._count_rows(db_path, "memory_items"))
+            self.assertEqual(0, self._count_rows(db_path, "memory_staging"))
 
     def test_no_real_network_call_in_llm_tests(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -415,6 +570,67 @@ class CliTestCase(unittest.TestCase):
         finally:
             connection.close()
 
+    def _list_track_analysis_events(self, db_path: str) -> list[dict]:
+        connection = sqlite3.connect(db_path)
+        connection.row_factory = sqlite3.Row
+        try:
+            rows = connection.execute(
+                """
+                SELECT event_type, actor_type, target_type, target_id, track_id, payload_json
+                FROM audit_events
+                WHERE event_type = 'track_analysis_saved'
+                ORDER BY created_at, audit_event_id
+                """
+            ).fetchall()
+            return [
+                {
+                    "event_type": row["event_type"],
+                    "actor_type": row["actor_type"],
+                    "target_type": row["target_type"],
+                    "target_id": row["target_id"],
+                    "track_id": row["track_id"],
+                    "payload": json.loads(row["payload_json"]),
+                }
+                for row in rows
+            ]
+        finally:
+            connection.close()
+
+    def _count_rows(self, db_path: str, table_name: str) -> int:
+        connection = sqlite3.connect(db_path)
+        try:
+            return int(connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0])
+        finally:
+            connection.close()
+
+    def _default_llm_result(self, answer: str = "ok") -> dict:
+        return {
+            "route": "answer_directly",
+            "answer": answer,
+            "selected_memory_ids": [],
+            "used_memory_ids": [],
+            "stage1_decision": {
+                "decision_type": "answer_directly",
+                "selected_memory_ids": [],
+                "draft_answer": answer,
+                "extracted_facts": [],
+                "memory_candidates": [],
+                "rationale": None,
+            },
+            "stage2_decision": None,
+        }
+
+    def _llm_result(self, overrides: dict | None) -> dict:
+        result = self._default_llm_result()
+        if overrides:
+            result.update(overrides)
+            if "answer" in overrides and "stage1_decision" not in overrides:
+                result["stage1_decision"] = {
+                    **result["stage1_decision"],
+                    "draft_answer": overrides["answer"],
+                }
+        return result
+
     @contextmanager
     def _patched_llm_path(
         self,
@@ -429,6 +645,7 @@ class CliTestCase(unittest.TestCase):
             "turn_counts_at_run": [],
             "in_transaction_at_run": [],
             "recent_texts_at_run": [],
+            "previous_analysis_at_run": [],
         }
 
         class FakeProvider:
@@ -466,10 +683,12 @@ class CliTestCase(unittest.TestCase):
                     exclude_turn_id=exclude_turn_id,
                 )
                 calls["recent_texts_at_run"].append([turn.content_text for turn in recent_turns])
+                calls["previous_analysis_at_run"].append(self._repository.get_latest_track_analysis(track_id))
                 if error is not None:
                     raise error
-                return result or {"answer": "ok"}
+                return self_outer._llm_result(result)
 
+        self_outer = self
         with patch.multiple(
             "mnemosyne_brain.app.cli",
             OpenAICompatibleLLMProvider=FakeProviderFactory,
