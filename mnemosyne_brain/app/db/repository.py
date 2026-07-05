@@ -652,6 +652,110 @@ class SqliteRepository:
             raise ValueError(f"Unsupported table for counting: {table_name}")
         return self._connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
 
+    def list_recent_turns_for_active_track(self, track_id: str, *, limit: int) -> list[DialogueTurn]:
+        """Return recent dialogue turns for an active working track only."""
+
+        track = self.get_track(track_id)
+        if track.status is TrackStatus.CLOSED:
+            return []
+        rows = self._connection.execute(
+            """
+            SELECT *
+            FROM dialogue_turns
+            WHERE track_id = ?
+            ORDER BY created_at DESC, turn_id DESC
+            LIMIT ?
+            """,
+            (track_id, limit),
+        ).fetchall()
+        return [self._turn_from_row(row) for row in reversed(rows)]
+
+    def get_latest_track_analysis(self, track_id: str) -> dict[str, Any] | None:
+        """Return the latest saved analysis payload for a track."""
+
+        row = self._connection.execute(
+            """
+            SELECT payload_json
+            FROM audit_events
+            WHERE event_type = 'track_analysis_saved'
+              AND target_type = 'dialogue_track'
+              AND target_id = ?
+            ORDER BY created_at DESC, audit_event_id DESC
+            LIMIT 1
+            """,
+            (track_id,),
+        ).fetchone()
+        return None if row is None else self.from_json(row["payload_json"])
+
+    def list_pinned_exact_messages(self, track_id: str, *, limit: int) -> list[dict[str, Any]]:
+        """Return pinned exact messages or quotes for a track."""
+
+        rows = self._connection.execute(
+            """
+            SELECT audit_event_id, payload_json, created_at
+            FROM audit_events
+            WHERE event_type = 'pinned_exact_message'
+              AND target_type = 'dialogue_track'
+              AND target_id = ?
+            ORDER BY created_at DESC, audit_event_id DESC
+            LIMIT ?
+            """,
+            (track_id, limit),
+        ).fetchall()
+        pins: list[dict[str, Any]] = []
+        for row in reversed(rows):
+            payload = self.from_json(row["payload_json"])
+            pins.append(
+                {
+                    "pin_id": row["audit_event_id"],
+                    "text": payload.get("text", ""),
+                    "created_at": row["created_at"],
+                }
+            )
+        return pins
+
+    def list_memory_manifest_items(self, *, limit: int) -> list[dict[str, Any]]:
+        """Return bounded memory metadata without full memory content."""
+
+        rows = self._connection.execute(
+            """
+            SELECT memory_id, memory_type, content_json, confidence, created_at, updated_at
+            FROM memory_items
+            WHERE status IN ('active', 'needs_confirmation')
+            ORDER BY updated_at DESC, memory_id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [self._memory_manifest_from_row(row) for row in rows]
+
+    def get_memory_context_items(self, memory_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Return full memory content for selected memory ids only."""
+
+        if not memory_ids:
+            return {}
+        placeholders = ",".join("?" for _ in memory_ids)
+        rows = self._connection.execute(
+            f"""
+            SELECT memory_id, memory_type, content_json, confidence, created_at, updated_at
+            FROM memory_items
+            WHERE memory_id IN ({placeholders})
+              AND status IN ('active', 'needs_confirmation')
+            """,
+            tuple(memory_ids),
+        ).fetchall()
+        return {
+            row["memory_id"]: {
+                "memory_id": row["memory_id"],
+                "kind": row["memory_type"],
+                "content": self.from_json(row["content_json"]),
+                "confidence": row["confidence"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        }
+
     def _normalize_phone(self, raw_phone: str) -> str:
         digits = "".join(character for character in raw_phone if character.isdigit())
         if not digits:
@@ -700,3 +804,24 @@ class SqliteRepository:
         payload["candidate_person_ids"] = self.from_json(payload["candidate_person_ids"])
         payload["provenance_json"] = Provenance(**self.from_json(payload["provenance_json"]))
         return IdentifierAssignment(**payload)
+
+    def _memory_manifest_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        content = self.from_json(row["content_json"])
+        text = ""
+        if isinstance(content, dict):
+            text = str(content.get("preview") or content.get("title") or content.get("text") or "")
+        preview = text[:120]
+        if len(text) > 120:
+            preview = preview.rstrip() + "..."
+        return {
+            "memory_id": row["memory_id"],
+            "kind": row["memory_type"],
+            "entity_type": content.get("entity_type") if isinstance(content, dict) else None,
+            "entity_label": content.get("entity_label") if isinstance(content, dict) else None,
+            "title": content.get("title") if isinstance(content, dict) else None,
+            "short_preview": preview,
+            "importance": content.get("importance") if isinstance(content, dict) else None,
+            "confidence": row["confidence"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }

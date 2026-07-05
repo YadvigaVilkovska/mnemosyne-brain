@@ -30,6 +30,14 @@ python3 -m mnemosyne_brain.app.run_demo
 python3 -m mnemosyne_brain.app.cli "Remember that Pav loves architecture diagrams"
 ```
 
+## LLM Context Policy v0.4.3
+
+Stage 1 context is deterministic: current raw message, up to the last 12 messages from the current active track, previous track analysis, pinned exact messages, and a memory manifest.
+
+Stage 2 uses the same base context, then adds full content only for selected validated `MemoryItems`.
+
+There is no free-form summary in the context. Closed tracks do not leak their dialogue tail into new active tracks. All `dialogue_turns` remain stored in SQLite.
+
 ## DB Path
 
 The demo reads `MNEMOSYNE_DB_PATH`. If it is not set, it uses `./mnemosyne_brain.sqlite3`.
