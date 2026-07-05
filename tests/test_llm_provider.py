@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from mnemosyne_brain.app.contracts.analysis import Stage1Decision, Stage2Decision
+from mnemosyne_brain.app.contracts.analysis import Stage0NLUFrame, Stage1Decision, Stage2Decision
 from mnemosyne_brain.app.llm_provider import (
     CHAT_COMPLETIONS_PATH,
     LLM_API_KEY_ENV,
@@ -108,6 +108,43 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertEqual("test_model", transport.calls[0]["payload"]["model"])
         self.assertEqual({"type": "json_object"}, transport.calls[0]["payload"]["response_format"])
 
+    def test_stage0_valid_fake_http_response_returns_frame(self) -> None:
+        provider, transport = self._provider(
+            json.dumps(
+                {
+                    "schema_version": "stage0_nlu_frame.v1",
+                    "normalized_intent": "The user asks whether an alias association can be remembered.",
+                    "dialogue_acts": ["question", "alias_or_equivalence_proposal"],
+                    "entities": [
+                        {
+                            "surface": "X",
+                            "kind": "alias",
+                            "role": "subject",
+                        }
+                    ],
+                    "new_information": {
+                        "status": "possible",
+                        "kind": "alias_equivalence",
+                        "summary": "Possible alias equivalence proposal.",
+                        "needs_confirmation": True,
+                    },
+                    "clarification": {
+                        "needed": True,
+                        "question": "Do you mean that X and Y refer to the same person?",
+                    },
+                    "memory_selection_hint": {
+                        "needed": False,
+                        "reason": "",
+                        "query_terms": [],
+                    },
+                }
+            )
+        )
+        frame = provider.run_stage0_nlu({"stage": "stage1", "current_user_message": "hello"})
+        self.assertIsInstance(frame, Stage0NLUFrame)
+        self.assertEqual("stage0_nlu_frame.v1", frame.schema_version)
+        self.assertEqual(1, len(transport.calls))
+
     def test_stage1_prompt_rejects_wrapped_contract_and_includes_memory_selection_rules(self) -> None:
         provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
         provider.decide_stage1({"stage": "stage1"})
@@ -123,6 +160,55 @@ class LLMProviderTestCase(unittest.TestCase):
         )
         self.assertIn('never use request_memory', prompt)
         self.assertIn("recent_messages and answer_directly", prompt)
+
+    def test_stage0_prompt_contains_nlu_frame_guidance(self) -> None:
+        provider, transport = self._provider(
+            json.dumps(
+                {
+                    "schema_version": "stage0_nlu_frame.v1",
+                    "normalized_intent": "Normalized intent.",
+                    "dialogue_acts": ["question"],
+                    "entities": [],
+                    "new_information": {
+                        "status": "none",
+                        "kind": "none",
+                        "summary": "",
+                        "needs_confirmation": False,
+                    },
+                    "clarification": {"needed": False, "question": ""},
+                    "memory_selection_hint": {"needed": False, "reason": "", "query_terms": []},
+                }
+            )
+        )
+        provider.run_stage0_nlu({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("Normalize current_user_message into conversational intent", prompt)
+        self.assertIn("Classify dialogue act", prompt)
+        self.assertIn("Extract structured entities/references", prompt)
+        self.assertIn("Detect whether current_user_message introduces new durable information", prompt)
+        self.assertIn("ambiguity requires one clarification question", prompt)
+        self.assertIn("recent_messages may help interpret current_user_message", prompt)
+        self.assertIn("previous_track_analysis_saved may help interpret current_user_message", prompt)
+        self.assertIn("Neither recent_messages nor previous_track_analysis_saved are sources of new information", prompt)
+        self.assertIn("New durable information must come from current_user_message after normalization", prompt)
+        self.assertIn("Do not use keyword matching", prompt)
+        self.assertIn("Do not use regex", prompt)
+        self.assertIn("Do not use phrase-trigger lists", prompt)
+        self.assertIn("Do not add Russian examples", prompt)
+        self.assertIn("Do not hardcode live names or live text", prompt)
+        self.assertIn("Your job is not to answer", prompt)
+        self.assertIn("Do not create memory_candidates", prompt)
+        self.assertIn("Do not select memory IDs yet", prompt)
+
+    def test_stage1_prompt_uses_stage0_frame_when_present(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("If stage0_nlu_frame is present, use normalized_intent as the primary interpretation", prompt)
+        self.assertIn("Answer normalized intent, not just surface wording", prompt)
+        self.assertIn("Use dialogue_acts and new_information from stage0_nlu_frame", prompt)
+        self.assertIn("If clarification.needed=true in stage0_nlu_frame, ask that clarification question naturally", prompt)
+        self.assertIn("Do not treat Stage 0 as final truth; it is an interpretation frame", prompt)
 
     def test_stage1_prompt_keeps_candidate_extraction_on_answer_directly_route(self) -> None:
         provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
@@ -358,6 +444,75 @@ class LLMProviderTestCase(unittest.TestCase):
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("Do not wrap in Stage2Decision", prompt)
         self.assertIn("final_answer", prompt)
+
+    def test_stage0_response_with_draft_answer_fails(self) -> None:
+        provider, _transport = self._provider(
+            json.dumps(
+                {
+                    "schema_version": "stage0_nlu_frame.v1",
+                    "normalized_intent": "Intent.",
+                    "dialogue_acts": ["question"],
+                    "entities": [],
+                    "new_information": {
+                        "status": "none",
+                        "kind": "none",
+                        "summary": "",
+                        "needs_confirmation": False,
+                    },
+                    "clarification": {"needed": False, "question": ""},
+                    "memory_selection_hint": {"needed": False, "reason": "", "query_terms": []},
+                    "draft_answer": "not allowed",
+                }
+            )
+        )
+        with self.assertRaisesRegex(ProviderResponseError, "contract validation"):
+            provider.run_stage0_nlu({"stage": "stage1"})
+
+    def test_stage0_response_with_memory_candidates_fails(self) -> None:
+        provider, _transport = self._provider(
+            json.dumps(
+                {
+                    "schema_version": "stage0_nlu_frame.v1",
+                    "normalized_intent": "Intent.",
+                    "dialogue_acts": ["question"],
+                    "entities": [],
+                    "new_information": {
+                        "status": "none",
+                        "kind": "none",
+                        "summary": "",
+                        "needs_confirmation": False,
+                    },
+                    "clarification": {"needed": False, "question": ""},
+                    "memory_selection_hint": {"needed": False, "reason": "", "query_terms": []},
+                    "memory_candidates": [],
+                }
+            )
+        )
+        with self.assertRaisesRegex(ProviderResponseError, "contract validation"):
+            provider.run_stage0_nlu({"stage": "stage1"})
+
+    def test_stage0_response_with_selected_memory_ids_fails(self) -> None:
+        provider, _transport = self._provider(
+            json.dumps(
+                {
+                    "schema_version": "stage0_nlu_frame.v1",
+                    "normalized_intent": "Intent.",
+                    "dialogue_acts": ["question"],
+                    "entities": [],
+                    "new_information": {
+                        "status": "none",
+                        "kind": "none",
+                        "summary": "",
+                        "needs_confirmation": False,
+                    },
+                    "clarification": {"needed": False, "question": ""},
+                    "memory_selection_hint": {"needed": False, "reason": "", "query_terms": []},
+                    "selected_memory_ids": [],
+                }
+            )
+        )
+        with self.assertRaisesRegex(ProviderResponseError, "contract validation"):
+            provider.run_stage0_nlu({"stage": "stage1"})
 
     def test_invalid_json_response_fails_clearly(self) -> None:
         provider, _transport = self._provider("not json")

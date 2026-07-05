@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from mnemosyne_brain.app.contracts.analysis import Stage1Decision, Stage2Decision
+from mnemosyne_brain.app.contracts.analysis import Stage0NLUFrame, Stage1Decision, Stage2Decision
 from mnemosyne_brain.app.contracts.base import new_id, server_now
 from mnemosyne_brain.app.contracts.memory import MemoryCandidate
 from mnemosyne_brain.app.contracts.provenance import Provenance
@@ -19,13 +19,44 @@ class FakeLLMAdapter:
     def __init__(
         self,
         *,
+        stage0_frame: Stage0NLUFrame | None = None,
         stage1_decision: Stage1Decision,
         stage2_decision: Stage2Decision | None = None,
     ) -> None:
+        self.stage0_frame = stage0_frame or Stage0NLUFrame.model_validate(
+            {
+                "schema_version": "stage0_nlu_frame.v1",
+                "normalized_intent": "The user asks for a direct answer.",
+                "dialogue_acts": ["question"],
+                "entities": [],
+                "new_information": {
+                    "status": "none",
+                    "kind": "none",
+                    "summary": "",
+                    "needs_confirmation": False,
+                },
+                "clarification": {
+                    "needed": False,
+                    "question": "",
+                },
+                "memory_selection_hint": {
+                    "needed": False,
+                    "reason": "",
+                    "query_terms": [],
+                },
+            }
+        )
         self.stage1_decision = stage1_decision
         self.stage2_decision = stage2_decision
+        self.stage0_contexts: list[dict[str, Any]] = []
         self.stage1_contexts: list[dict[str, Any]] = []
         self.stage2_contexts: list[dict[str, Any]] = []
+
+    def run_stage0_nlu(self, context: dict[str, Any]) -> Stage0NLUFrame:
+        """Record Stage 0 context and return the configured frame."""
+
+        self.stage0_contexts.append(context)
+        return self.stage0_frame
 
     def decide_stage1(self, stage1_context: dict[str, Any]) -> Stage1Decision:
         """Record Stage 1 context and return the configured decision."""
@@ -109,6 +140,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
         self.assertEqual("Direct local answer.", result["answer"])
         self.assertEqual([], result["selected_memory_ids"])
         self.assertEqual([], result["used_memory_ids"])
+        self.assertEqual(1, len(adapter.stage0_contexts))
         self.assertEqual(1, len(adapter.stage1_contexts))
         self.assertEqual([], adapter.stage2_contexts)
         self.assertIsNone(result["stage2_decision"])
@@ -129,6 +161,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
             self.track.track_id,
             "test message",
         )
+        self.assertEqual(1, len(adapter.stage0_contexts))
         self.assertEqual("used_selected_memory", result["route"])
         self.assertEqual("Pav loves architecture diagrams.", result["answer"])
         self.assertEqual(1, len(adapter.stage2_contexts))
@@ -154,6 +187,68 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
         self.assertEqual([second_id, first_id], selected_context_ids)
         self.assertEqual([second_id, first_id], result["selected_memory_ids"])
 
+    def test_run_stage0_nlu_is_called_before_stage1(self) -> None:
+        adapter = FakeLLMAdapter(
+            stage1_decision=Stage1Decision(
+                decision_type="answer_directly",
+                draft_answer="Direct answer.",
+            )
+        )
+        DeterministicLLMOrchestrator(self.repository, adapter).run_turn(
+            self.track.track_id,
+            "test message",
+        )
+        self.assertEqual(1, len(adapter.stage0_contexts))
+        self.assertEqual(1, len(adapter.stage1_contexts))
+        self.assertNotIn("stage0_nlu_frame", adapter.stage0_contexts[0])
+        self.assertIn("stage0_nlu_frame", adapter.stage1_contexts[0])
+
+    def test_stage1_context_receives_stage0_nlu_frame(self) -> None:
+        stage0_frame = Stage0NLUFrame.model_validate(
+            {
+                "schema_version": "stage0_nlu_frame.v1",
+                "normalized_intent": "The user asks whether an alias can be remembered.",
+                "dialogue_acts": ["question", "alias_or_equivalence_proposal"],
+                "entities": [
+                    {
+                        "surface": "X",
+                        "kind": "alias",
+                        "role": "subject",
+                    }
+                ],
+                "new_information": {
+                    "status": "possible",
+                    "kind": "alias_equivalence",
+                    "summary": "Possible alias equivalence.",
+                    "needs_confirmation": True,
+                },
+                "clarification": {
+                    "needed": True,
+                    "question": "Do you mean the same person?",
+                },
+                "memory_selection_hint": {
+                    "needed": True,
+                    "reason": "Potential identity lookup may help later.",
+                    "query_terms": ["X", "Y"],
+                },
+            }
+        )
+        adapter = FakeLLMAdapter(
+            stage0_frame=stage0_frame,
+            stage1_decision=Stage1Decision(
+                decision_type="answer_directly",
+                draft_answer="Direct answer.",
+            ),
+        )
+        DeterministicLLMOrchestrator(self.repository, adapter).run_turn(
+            self.track.track_id,
+            "test message",
+        )
+        self.assertEqual(
+            stage0_frame.model_dump(mode="json"),
+            adapter.stage1_contexts[0]["stage0_nlu_frame"],
+        )
+
     def test_used_memory_ids_are_returned_from_stage2(self) -> None:
         first_id = self._add_memory("first")
         second_id = self._add_memory("second")
@@ -172,6 +267,93 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
             "test message",
         )
         self.assertEqual([second_id], result["used_memory_ids"])
+
+    def test_final_answer_still_comes_from_stage1_or_stage2(self) -> None:
+        direct_adapter = FakeLLMAdapter(
+            stage1_decision=Stage1Decision(
+                decision_type="answer_directly",
+                draft_answer="Direct answer.",
+            )
+        )
+        direct_result = DeterministicLLMOrchestrator(self.repository, direct_adapter).run_turn(
+            self.track.track_id,
+            "direct message",
+        )
+        self.assertEqual("Direct answer.", direct_result["answer"])
+
+        memory_id = self._add_memory("memory")
+        memory_adapter = FakeLLMAdapter(
+            stage1_decision=Stage1Decision(
+                decision_type="request_memory",
+                selected_memory_ids=[memory_id],
+            ),
+            stage2_decision=Stage2Decision(
+                final_answer="Stage 2 answer.",
+                used_memory_ids=[memory_id],
+            ),
+        )
+        memory_result = DeterministicLLMOrchestrator(self.repository, memory_adapter).run_turn(
+            self.track.track_id,
+            "memory message",
+        )
+        self.assertEqual("Stage 2 answer.", memory_result["answer"])
+
+    def test_memory_candidates_still_come_only_from_stage1_or_stage2(self) -> None:
+        adapter = FakeLLMAdapter(
+            stage0_frame=Stage0NLUFrame.model_validate(
+                {
+                    "schema_version": "stage0_nlu_frame.v1",
+                    "normalized_intent": "Potential alias proposal.",
+                    "dialogue_acts": ["alias_or_equivalence_proposal"],
+                    "entities": [],
+                    "new_information": {
+                        "status": "possible",
+                        "kind": "alias_equivalence",
+                        "summary": "Possible alias.",
+                        "needs_confirmation": True,
+                    },
+                    "clarification": {
+                        "needed": True,
+                        "question": "Do you mean the same person?",
+                    },
+                    "memory_selection_hint": {
+                        "needed": False,
+                        "reason": "",
+                        "query_terms": [],
+                    },
+                }
+            ),
+            stage1_decision=Stage1Decision(
+                decision_type="answer_directly",
+                draft_answer="Direct answer.",
+                memory_candidates=[{"candidate_type": "name_alias", "content": {"raw_name": "X"}}],
+            ),
+        )
+        result = DeterministicLLMOrchestrator(self.repository, adapter).run_turn(
+            self.track.track_id,
+            "test message",
+        )
+        self.assertEqual(
+            [{"candidate_type": "name_alias", "content": {"raw_name": "X"}}],
+            result["stage1_decision"]["memory_candidates"],
+        )
+        self.assertIsNone(result["stage2_decision"])
+
+    def test_stage0_does_not_write_memory(self) -> None:
+        before_candidates = self.repository.count_rows("memory_candidates")
+        before_items = self.repository.count_rows("memory_items")
+        adapter = FakeLLMAdapter(
+            stage1_decision=Stage1Decision(
+                decision_type="answer_directly",
+                draft_answer="Direct answer.",
+            )
+        )
+        DeterministicLLMOrchestrator(self.repository, adapter).run_turn(
+            self.track.track_id,
+            "test message",
+        )
+        self.assertEqual(before_candidates, self.repository.count_rows("memory_candidates"))
+        self.assertEqual(before_items, self.repository.count_rows("memory_items"))
 
     def test_exclude_turn_id_reaches_context_builder_behavior(self) -> None:
         self.repository.persist_dialogue_turn(

@@ -12,13 +12,62 @@ from typing import Any, Protocol, TypeVar
 from pydantic import ValidationError
 
 from .config import load_project_env
-from .contracts.analysis import Stage1Decision, Stage2Decision
+from .contracts.analysis import Stage0NLUFrame, Stage1Decision, Stage2Decision
 
 LLM_BASE_URL_ENV = "MNEMOSYNE_LLM_BASE_URL"
 LLM_API_KEY_ENV = "MNEMOSYNE_LLM_API_KEY"
 LLM_MODEL_ENV = "MNEMOSYNE_LLM_MODEL"
 CHAT_COMPLETIONS_PATH = "/chat/completions"
 DEFAULT_TIMEOUT_SECONDS = 30.0
+STAGE0_NLU_SYSTEM_PROMPT = (
+    "You are Stage 0: NLU Frame Builder. "
+    "Your job is not to answer. "
+    "Your job is to understand the current user message. "
+    "Return one JSON object only for Stage 0. "
+    "Do not wrap in Stage0NLUFrame. "
+    "Do not return prose. "
+    "Do not use markdown. "
+    "Do not include draft_answer. "
+    "Do not include final_answer. "
+    "Do not include memory_candidates. "
+    "Do not include selected_memory_ids. "
+    "Perform this order: "
+    "1. Normalize current_user_message into conversational intent. "
+    "2. Classify dialogue act(s). "
+    "3. Extract structured entities/references from the current message. "
+    "4. Detect whether current_user_message introduces new durable information. "
+    "5. Decide whether ambiguity requires one clarification question. "
+    "6. Produce memory_selection_hint only as a hint, not selected memory IDs. "
+    "7. Return only valid Stage0NLUFrame JSON. "
+    "Allowed JSON shape: "
+    '{"schema_version":"stage0_nlu_frame.v1","normalized_intent":"","dialogue_acts":["question"],"entities":[{"surface":"","kind":"person|alias|relationship|preference|topic|other","role":"subject|object|reference|unknown"}],"new_information":{"status":"none|clear|possible|correction","kind":"none|preference|person|alias_equivalence|relationship|biographical_context|memory_instruction|other","summary":"","needs_confirmation":false},"clarification":{"needed":false,"question":""},"memory_selection_hint":{"needed":false,"reason":"","query_terms":[]}}. '
+    "Intent normalization answers what the user wants to achieve, not just what the surface wording says. "
+    "Dialogue acts describe the communicative function of the message. "
+    "Entities are structured pieces of information inside the current user message. "
+    "recent_messages may help interpret current_user_message. "
+    "previous_track_analysis_saved may help interpret current_user_message. "
+    "Neither recent_messages nor previous_track_analysis_saved are sources of new information by themselves. "
+    "New durable information must come from current_user_message after normalization. "
+    "If new information is clear, mark new_information.status=\"clear\". "
+    "If new information is possible but ambiguous, mark status=\"possible\", needs_confirmation=true, and provide one clarification question. "
+    "If the message corrects or refines prior context, mark status=\"correction\". "
+    "If there is no new durable information, mark status=\"none\" and kind=\"none\". "
+    "A surface question can normalize into a correction, proposal, relationship update, memory instruction, complaint, or alias/equivalence proposal. "
+    "A complaint or challenge should be recognized as such, and should not create durable memory unless it contains new durable information. "
+    "An alias or equivalence proposal should use dialogue act \"alias_or_equivalence_proposal\" and new_information.kind=\"alias_equivalence\". "
+    "If alias or equivalence is conditional or tentative, mark it possible and needs_confirmation=true. "
+    "A relationship update should use dialogue act \"relationship_update\". "
+    "A sensitive biographical context update should use dialogue act \"biographical_context_update\" without moralizing. "
+    "A preference or constraint update should use dialogue act \"preference_or_constraint_update\". "
+    "Do not use keyword matching. "
+    "Do not use regex. "
+    "Do not use phrase-trigger lists. "
+    "Do not add Russian examples. "
+    "Do not hardcode live names or live text. "
+    "Do not answer the user. "
+    "Do not create memory_candidates. "
+    "Do not select memory IDs yet."
+)
 STAGE1_SYSTEM_PROMPT = (
     "Return one JSON object only for Stage 1. "
     "Do not wrap in Stage1Decision. "
@@ -32,6 +81,13 @@ STAGE1_SYSTEM_PROMPT = (
     '"extracted_facts":[],'
     '"memory_candidates":[],'
     '"rationale":null}. '
+    "If stage0_nlu_frame is present, use normalized_intent as the primary interpretation of current_user_message. "
+    "Answer normalized intent, not just surface wording. "
+    "Use dialogue_acts and new_information from stage0_nlu_frame to decide whether to answer, clarify, or emit candidates. "
+    "If clarification.needed=true in stage0_nlu_frame, ask that clarification question naturally in draft_answer. "
+    "Emit memory_candidates only from new durable information in current_user_message or stage0_nlu_frame. "
+    "Do not emit candidates from recent_messages or previous_track_analysis_saved alone. "
+    "Do not treat Stage 0 as final truth; it is an interpretation frame. "
     "Show strong, respectful curiosity about the user, the user's context, people, environment, relationships, preferences, constraints, and goals. "
     "Actively invite safe context when it would help the conversation. "
     "Treat current_user_message as the primary task for the current turn. "
@@ -109,7 +165,7 @@ STAGE2_SYSTEM_PROMPT = (
     "Put the final user-facing answer in final_answer."
 )
 
-DecisionModel = TypeVar("DecisionModel", Stage1Decision, Stage2Decision)
+DecisionModel = TypeVar("DecisionModel", Stage0NLUFrame, Stage1Decision, Stage2Decision)
 
 
 class ProviderConfigError(RuntimeError):
@@ -122,6 +178,9 @@ class ProviderResponseError(RuntimeError):
 
 class LLMAdapter(Protocol):
     """Protocol consumed by future orchestration code for LLM decisions."""
+
+    def run_stage0_nlu(self, context: dict[str, Any]) -> Stage0NLUFrame:
+        """Return a structured Stage 0 NLU frame."""
 
     def decide_stage1(self, stage1_context: dict[str, Any]) -> Stage1Decision:
         """Return a structured Stage 1 decision."""
@@ -221,6 +280,12 @@ class OpenAICompatibleLLMProvider(LLMAdapter):
 
         content = self._request_decision(STAGE1_SYSTEM_PROMPT, stage1_context)
         return self._parse_decision(content, Stage1Decision)
+
+    def run_stage0_nlu(self, context: dict[str, Any]) -> Stage0NLUFrame:
+        """Ask the provider for a structured Stage 0 NLU frame."""
+
+        content = self._request_decision(STAGE0_NLU_SYSTEM_PROMPT, context)
+        return self._parse_decision(content, Stage0NLUFrame)
 
     def decide_stage2(self, stage2_context: dict[str, Any]) -> Stage2Decision:
         """Ask the provider for a structured Stage 2 final decision."""

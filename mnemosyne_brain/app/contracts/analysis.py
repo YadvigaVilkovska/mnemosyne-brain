@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import field_validator, model_validator
 
-from .base import EphemeralAnalysisModel, PersistedModel
+from .base import EphemeralAnalysisModel, PersistedModel, StrictContractModel
 
 
 class ConflictAction(StrEnum):
@@ -39,6 +39,148 @@ class ExecutorFeedbackAnalysis(EphemeralAnalysisModel):
     event_id: str
     should_update_track: bool
     local_answer: str
+
+
+class Stage0DialogueAct(StrEnum):
+    """Allowed conversational acts detected in the current user message."""
+
+    QUESTION = "question"
+    COMPLAINT_OR_CHALLENGE = "complaint_or_challenge"
+    MEMORY_INSTRUCTION = "memory_instruction"
+    CORRECTION_OR_REFINEMENT = "correction_or_refinement"
+    ALIAS_OR_EQUIVALENCE_PROPOSAL = "alias_or_equivalence_proposal"
+    RELATIONSHIP_UPDATE = "relationship_update"
+    BIOGRAPHICAL_CONTEXT_UPDATE = "biographical_context_update"
+    PREFERENCE_OR_CONSTRAINT_UPDATE = "preference_or_constraint_update"
+    CONFIRMATION_REQUEST = "confirmation_request"
+    ANSWER_TO_CLARIFICATION = "answer_to_clarification"
+    NO_NEW_DURABLE_INFO = "no_new_durable_info"
+    OTHER = "other"
+
+
+class Stage0EntityKind(StrEnum):
+    """Allowed normalized entity kinds in the Stage 0 frame."""
+
+    PERSON = "person"
+    ALIAS = "alias"
+    RELATIONSHIP = "relationship"
+    PREFERENCE = "preference"
+    TOPIC = "topic"
+    OTHER = "other"
+
+
+class Stage0EntityRole(StrEnum):
+    """Allowed entity roles in the Stage 0 frame."""
+
+    SUBJECT = "subject"
+    OBJECT = "object"
+    REFERENCE = "reference"
+    UNKNOWN = "unknown"
+
+
+class Stage0NewInformationStatus(StrEnum):
+    """Allowed durable-information detection outcomes."""
+
+    NONE = "none"
+    CLEAR = "clear"
+    POSSIBLE = "possible"
+    CORRECTION = "correction"
+
+
+class Stage0NewInformationKind(StrEnum):
+    """Allowed durable-information kinds in the Stage 0 frame."""
+
+    NONE = "none"
+    PREFERENCE = "preference"
+    PERSON = "person"
+    ALIAS_EQUIVALENCE = "alias_equivalence"
+    RELATIONSHIP = "relationship"
+    BIOGRAPHICAL_CONTEXT = "biographical_context"
+    MEMORY_INSTRUCTION = "memory_instruction"
+    OTHER = "other"
+
+
+class Stage0Entity(StrictContractModel):
+    """Structured entity or reference extracted from the current user message."""
+
+    surface: str
+    kind: Stage0EntityKind
+    role: Stage0EntityRole
+
+    @field_validator("surface")
+    @classmethod
+    def validate_surface(cls, value: str) -> str:
+        """Require a non-empty entity surface string."""
+
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("surface must not be empty")
+        return stripped
+
+
+class Stage0NewInformation(StrictContractModel):
+    """Stage 0 decision about whether the message adds durable information."""
+
+    status: Stage0NewInformationStatus
+    kind: Stage0NewInformationKind
+    summary: str
+    needs_confirmation: bool
+
+
+class Stage0Clarification(StrictContractModel):
+    """Optional single clarification question needed before confident interpretation."""
+
+    needed: bool
+    question: str
+
+    @model_validator(mode="after")
+    def validate_question(self) -> "Stage0Clarification":
+        """Require one question only when clarification is needed."""
+
+        if self.needed and not self.question.strip():
+            raise ValueError("clarification.question must be non-empty when clarification.needed=true")
+        if not self.needed and self.question:
+            raise ValueError("clarification.question must be empty when clarification.needed=false")
+        return self
+
+
+class Stage0MemorySelectionHint(StrictContractModel):
+    """Non-binding hint about whether later memory selection might be useful."""
+
+    needed: bool
+    reason: str
+    query_terms: list[str]
+
+
+class Stage0NLUFrame(StrictContractModel):
+    """Runtime interpretation frame for the current user message before Stage 1."""
+
+    schema_version: Literal["stage0_nlu_frame.v1"]
+    normalized_intent: str
+    dialogue_acts: list[Stage0DialogueAct]
+    entities: list[Stage0Entity]
+    new_information: Stage0NewInformation
+    clarification: Stage0Clarification
+    memory_selection_hint: Stage0MemorySelectionHint
+
+    @field_validator("normalized_intent")
+    @classmethod
+    def validate_normalized_intent(cls, value: str) -> str:
+        """Require a non-empty normalized intent string."""
+
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("normalized_intent must not be empty")
+        return stripped
+
+    @field_validator("dialogue_acts")
+    @classmethod
+    def validate_dialogue_acts(cls, value: list[Stage0DialogueAct]) -> list[Stage0DialogueAct]:
+        """Require at least one valid dialogue act."""
+
+        if not value:
+            raise ValueError("dialogue_acts must not be empty")
+        return value
 
 
 class Stage1Decision(PersistedModel):

@@ -33,7 +33,12 @@ class DeterministicLLMOrchestrator:
             current_user_message=current_user_message,
             exclude_turn_id=exclude_turn_id,
         )
-        stage1_decision = self._adapter.decide_stage1(stage1_context)
+        stage0_nlu_frame = self._adapter.run_stage0_nlu(dict(stage1_context))
+        enriched_stage1_context = {
+            **stage1_context,
+            "stage0_nlu_frame": stage0_nlu_frame.model_dump(mode="json"),
+        }
+        stage1_decision = self._adapter.decide_stage1(enriched_stage1_context)
         if stage1_decision.decision_type == ROUTE_ANSWER_DIRECTLY:
             draft_answer = (stage1_decision.draft_answer or "").strip()
             if not draft_answer:
