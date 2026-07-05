@@ -49,6 +49,12 @@ Stage 2 returns a structured final decision with `final_answer` and `used_memory
 
 There is no free-form summary in the context. Closed tracks do not leak their dialogue tail into new active tracks. All `dialogue_turns` remain stored in SQLite.
 
+## Real LLM Provider Adapter
+
+The isolated provider adapter uses OpenAI-compatible chat completions and is configured only by `MNEMOSYNE_LLM_BASE_URL`, `MNEMOSYNE_LLM_API_KEY`, and `MNEMOSYNE_LLM_MODEL`.
+
+Tests use fake HTTP transports only, and secrets must never be committed to git.
+
 ## DB Path
 
 The demo reads `MNEMOSYNE_DB_PATH`. If it is not set, it uses `./mnemosyne_brain.sqlite3`.
