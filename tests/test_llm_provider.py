@@ -164,14 +164,14 @@ class LLMProviderTestCase(unittest.TestCase):
         provider, transport = self._provider(
             json.dumps(
                 {
-                    "final_answer": "Pav loves architecture diagrams.",
+                    "final_answer": "Provider returned a final answer.",
                     "used_memory_ids": ["mem_1"],
                 }
             )
         )
         decision = provider.decide_stage2({"stage": "stage2", "selected_memory_context": []})
         self.assertIsInstance(decision, Stage2Decision)
-        self.assertEqual("Pav loves architecture diagrams.", decision.final_answer)
+        self.assertEqual("Provider returned a final answer.", decision.final_answer)
         self.assertEqual(["mem_1"], decision.used_memory_ids)
         self.assertEqual(1, len(transport.calls))
 
