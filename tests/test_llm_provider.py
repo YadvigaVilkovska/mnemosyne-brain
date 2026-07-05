@@ -142,6 +142,37 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn('"recommended_action":"stage"', prompt)
         self.assertIn('"confidence":0.8', prompt)
 
+    def test_stage1_prompt_supports_safe_person_mention_candidates(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("mentions a person, persona, or named individual", prompt)
+        self.assertIn(
+            "even when the surrounding request is sensitive, private, sexual, or otherwise not appropriate to answer directly",
+            prompt,
+        )
+        self.assertIn("only non-sensitive identifying information", prompt)
+        self.assertIn(
+            "Do not include sexual claims, sexual judgments, private speculation, invasive attributes, or the sensitive request itself",
+            prompt,
+        )
+        self.assertIn("must still be refused or safely redirected in draft_answer", prompt)
+
+    def test_stage1_prompt_contains_safe_person_and_alias_candidate_shapes(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn('"candidate_type":"person"', prompt)
+        self.assertIn('"content":{"display_name":"<person name or alias exactly as mentioned>"}', prompt)
+        self.assertIn('"candidate_type":"name_alias"', prompt)
+        self.assertIn('"content":{"raw_name":"<name or alias exactly as mentioned>"}', prompt)
+
+    def test_stage1_prompt_forbids_fact_candidate_for_sensitive_claim(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("Do not create a fact candidate that stores the sensitive claim itself", prompt)
+
     def test_stage1_prompt_warns_against_claiming_permanent_memory_application(self) -> None:
         provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
         provider.decide_stage1({"stage": "stage1"})

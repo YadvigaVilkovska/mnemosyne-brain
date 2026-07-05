@@ -39,6 +39,16 @@ STAGE1_SYSTEM_PROMPT = (
     'When no memory read is needed, use decision_type="answer_directly". '
     'For this semantic memory capture case, use a memory_candidates item with this exact shape: '
     '{"candidate_type":"fact","content":{"text":"<concise fact extracted from the user message>"},"recommended_action":"stage","confidence":0.8}. '
+    'If current_user_message mentions a person, persona, or named individual, you may create a safe memory_candidates item for that entity mention. '
+    "This may still be appropriate even when the surrounding request is sensitive, private, sexual, or otherwise not appropriate to answer directly. "
+    "That candidate must contain only non-sensitive identifying information from the message. "
+    "Do not include sexual claims, sexual judgments, private speculation, invasive attributes, or the sensitive request itself in that candidate. "
+    "The sensitive part of the request must still be refused or safely redirected in draft_answer. "
+    'For a safe named-person mention, prefer this exact shape: '
+    '{"candidate_type":"person","content":{"display_name":"<person name or alias exactly as mentioned>"},"recommended_action":"stage","confidence":0.8}. '
+    'If the mention is better represented as an alias, you may instead use this exact shape: '
+    '{"candidate_type":"name_alias","content":{"raw_name":"<name or alias exactly as mentioned>"},"recommended_action":"stage","confidence":0.8}. '
+    "Do not create a fact candidate that stores the sensitive claim itself. "
     "The content.text value must contain only the concise fact extracted from the user message, not the instruction itself. "
     "The draft_answer may only acknowledge that the information was captured, noted, or recorded as a memory candidate. "
     "Do not say or imply the information was remembered, will be remembered, saved, stored, committed, written to memory, permanently saved, or applied to long-term memory. "
