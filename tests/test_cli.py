@@ -10,6 +10,7 @@ import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 from mnemosyne_brain.app.cli import main
@@ -18,6 +19,15 @@ from mnemosyne_brain.app.llm_provider import ProviderResponseError
 
 class CliTestCase(unittest.TestCase):
     """Verifies the CLI sends one message through the graph."""
+
+    @contextmanager
+    def _working_directory(self, path: str) -> Iterator[None]:
+        previous = os.getcwd()
+        os.chdir(path)
+        try:
+            yield
+        finally:
+            os.chdir(previous)
 
     def _run_cli_with_env(self, message: str, env: dict[str, str]) -> tuple[int, str]:
         return self._run_cli_args_with_env([message], env)
@@ -32,10 +42,11 @@ class CliTestCase(unittest.TestCase):
     def test_cli_prints_response_track_and_no_capsule_for_local_message(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "mnemosyne_cli.sqlite3")
-            exit_code, rendered = self._run_cli_with_env(
-                "Remember that Pav loves architecture diagrams",
-                {"MNEMOSYNE_DB_PATH": db_path},
-            )
+            with self._working_directory(temp_dir):
+                exit_code, rendered = self._run_cli_with_env(
+                    "Remember that Pav loves architecture diagrams",
+                    {"MNEMOSYNE_DB_PATH": db_path},
+                )
 
         self.assertEqual(0, exit_code)
         self.assertIn("Assistant: Local answer: Remember that Pav loves architecture diagrams", rendered)
@@ -45,15 +56,141 @@ class CliTestCase(unittest.TestCase):
     def test_missing_llm_env_vars_use_local_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "mnemosyne_cli_fallback.sqlite3")
-            exit_code, rendered = self._run_cli_with_env(
-                "fallback message",
-                {
-                    "MNEMOSYNE_DB_PATH": db_path,
-                    "MNEMOSYNE_LLM_BASE_URL": "https://llm.example.test/v1",
-                },
-            )
+            with self._working_directory(temp_dir):
+                exit_code, rendered = self._run_cli_with_env(
+                    "fallback message",
+                    {
+                        "MNEMOSYNE_DB_PATH": db_path,
+                        "MNEMOSYNE_LLM_BASE_URL": "https://llm.example.test/v1",
+                    },
+                )
         self.assertEqual(0, exit_code)
         self.assertIn("Assistant: Local answer: fallback message", rendered)
+
+    def test_cli_sees_llm_env_vars_from_project_env_file_without_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_envfile.sqlite3")
+            Path(temp_dir, ".env").write_text(
+                "\n".join(
+                    [
+                        "# comment",
+                        "",
+                        "MNEMOSYNE_LLM_BASE_URL=https://llm.example.test/v1",
+                        "MNEMOSYNE_LLM_API_KEY=env_file_key",
+                        "MNEMOSYNE_LLM_MODEL=test_model",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with self._working_directory(temp_dir):
+                with self._patched_llm_path({"answer": "Provider answer from env file."}) as calls:
+                    exit_code, rendered = self._run_cli_with_env(
+                        "hello",
+                        {"MNEMOSYNE_DB_PATH": db_path},
+                    )
+
+        self.assertEqual(0, exit_code)
+        self.assertIn("Assistant: Provider answer from env file.", rendered)
+        self.assertEqual(1, calls["provider_from_env"])
+
+    def test_existing_process_env_overrides_project_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_env_override.sqlite3")
+            Path(temp_dir, ".env").write_text(
+                "\n".join(
+                    [
+                        "MNEMOSYNE_LLM_BASE_URL=https://llm.example.test/v1",
+                        "MNEMOSYNE_LLM_API_KEY=file_key",
+                        "MNEMOSYNE_LLM_MODEL=file_model",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            observed = {}
+            with self._working_directory(temp_dir):
+                def fail_with_observed_env():
+                    observed["base_url"] = os.environ.get("MNEMOSYNE_LLM_BASE_URL")
+                    observed["api_key"] = os.environ.get("MNEMOSYNE_LLM_API_KEY")
+                    observed["model"] = os.environ.get("MNEMOSYNE_LLM_MODEL")
+                    raise ProviderResponseError("process value wins")
+
+                with patch(
+                    "mnemosyne_brain.app.cli.OpenAICompatibleLLMProvider.from_env",
+                    side_effect=fail_with_observed_env,
+                ) as provider_from_env:
+                    with self.assertRaisesRegex(ProviderResponseError, "process value wins"):
+                        self._run_cli_with_env(
+                            "hello",
+                            {
+                                "MNEMOSYNE_DB_PATH": db_path,
+                                "MNEMOSYNE_LLM_BASE_URL": "https://process.example.test/v1",
+                                "MNEMOSYNE_LLM_API_KEY": "process_key",
+                                "MNEMOSYNE_LLM_MODEL": "process_model",
+                            },
+                        )
+        self.assertEqual(1, provider_from_env.call_count)
+        self.assertEqual("https://process.example.test/v1", observed["base_url"])
+        self.assertEqual("process_key", observed["api_key"])
+        self.assertEqual("process_model", observed["model"])
+
+    def test_missing_project_env_does_not_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_missing_env.sqlite3")
+            with self._working_directory(temp_dir):
+                exit_code, rendered = self._run_cli_with_env(
+                    "fallback message",
+                    {"MNEMOSYNE_DB_PATH": db_path},
+                )
+        self.assertEqual(0, exit_code)
+        self.assertIn("Assistant: Local answer: fallback message", rendered)
+
+    def test_comments_and_blank_lines_in_project_env_are_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_env_comments.sqlite3")
+            Path(temp_dir, ".env").write_text(
+                "\n".join(
+                    [
+                        "",
+                        "# comment",
+                        "MNEMOSYNE_LLM_BASE_URL=https://llm.example.test/v1",
+                        "",
+                        "MNEMOSYNE_LLM_API_KEY=env_file_key",
+                        "   ",
+                        "MNEMOSYNE_LLM_MODEL=test_model",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with self._working_directory(temp_dir):
+                with self._patched_llm_path({"answer": "Provider answer from env file."}) as calls:
+                    exit_code, rendered = self._run_cli_with_env(
+                        "hello",
+                        {"MNEMOSYNE_DB_PATH": db_path},
+                    )
+        self.assertEqual(0, exit_code)
+        self.assertIn("Assistant: Provider answer from env file.", rendered)
+        self.assertEqual(1, calls["provider_from_env"])
+
+    def test_no_secrets_are_printed_when_loading_project_env(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_env_secret.sqlite3")
+            Path(temp_dir, ".env").write_text(
+                "\n".join(
+                    [
+                        "MNEMOSYNE_LLM_BASE_URL=https://llm.example.test/v1",
+                        "MNEMOSYNE_LLM_API_KEY=super_secret_value",
+                        "MNEMOSYNE_LLM_MODEL=test_model",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with self._working_directory(temp_dir):
+                with self._patched_llm_path({"answer": "Safe answer."}):
+                    _exit_code, rendered = self._run_cli_with_env(
+                        "hello",
+                        {"MNEMOSYNE_DB_PATH": db_path},
+                    )
+        self.assertNotIn("super_secret_value", rendered)
 
     def test_all_llm_env_vars_use_llm_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -122,10 +259,11 @@ class CliTestCase(unittest.TestCase):
     def test_local_fallback_accepts_thread_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "mnemosyne_cli_fallback_thread.sqlite3")
-            exit_code, rendered = self._run_cli_args_with_env(
-                ["--thread-id", "pav-main", "fallback message"],
-                {"MNEMOSYNE_DB_PATH": db_path},
-            )
+            with self._working_directory(temp_dir):
+                exit_code, rendered = self._run_cli_args_with_env(
+                    ["--thread-id", "pav-main", "fallback message"],
+                    {"MNEMOSYNE_DB_PATH": db_path},
+                )
         self.assertEqual(0, exit_code)
         self.assertIn("Assistant: Local answer: fallback message", rendered)
         self.assertIn("Track: trk_", rendered)

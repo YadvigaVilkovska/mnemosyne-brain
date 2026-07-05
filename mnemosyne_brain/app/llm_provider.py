@@ -11,6 +11,7 @@ from typing import Any, Protocol, TypeVar
 
 from pydantic import ValidationError
 
+from .config import load_project_env
 from .contracts.analysis import Stage1Decision, Stage2Decision
 
 LLM_BASE_URL_ENV = "MNEMOSYNE_LLM_BASE_URL"
@@ -134,6 +135,7 @@ class OpenAICompatibleLLMProvider(LLMAdapter):
     ) -> "OpenAICompatibleLLMProvider":
         """Create a provider from environment variables only."""
 
+        load_project_env()
         base_url = os.environ.get(LLM_BASE_URL_ENV, "").strip()
         api_key = os.environ.get(LLM_API_KEY_ENV, "").strip()
         model = os.environ.get(LLM_MODEL_ENV, "").strip()

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import unittest
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -51,6 +54,15 @@ class FakeTransport:
 class LLMProviderTestCase(unittest.TestCase):
     """Verifies the OpenAI-compatible provider remains isolated and strict."""
 
+    @contextmanager
+    def _working_directory(self, path: str):
+        previous = os.getcwd()
+        os.chdir(path)
+        try:
+            yield
+        finally:
+            os.chdir(previous)
+
     def _provider(self, response_content: str) -> tuple[OpenAICompatibleLLMProvider, FakeTransport]:
         transport = FakeTransport(
             {
@@ -73,9 +85,11 @@ class LLMProviderTestCase(unittest.TestCase):
         return provider, transport
 
     def test_missing_env_vars_fail_clearly(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(ProviderConfigError, LLM_BASE_URL_ENV):
-                OpenAICompatibleLLMProvider.from_env(transport=FakeTransport({}))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self._working_directory(temp_dir):
+                with patch.dict(os.environ, {}, clear=True):
+                    with self.assertRaisesRegex(ProviderConfigError, LLM_BASE_URL_ENV):
+                        OpenAICompatibleLLMProvider.from_env(transport=FakeTransport({}))
 
     def test_stage1_valid_fake_http_response_returns_decision(self) -> None:
         provider, transport = self._provider(
@@ -154,13 +168,35 @@ class LLMProviderTestCase(unittest.TestCase):
 
     def test_from_env_uses_env_without_printing_or_real_network(self) -> None:
         transport = FakeTransport({"choices": []})
-        env = {
-            LLM_BASE_URL_ENV: "https://llm.example.test/v1/",
-            LLM_API_KEY_ENV: "test_api_key",
-            LLM_MODEL_ENV: "test_model",
-        }
-        with patch.dict(os.environ, env, clear=True):
-            provider = OpenAICompatibleLLMProvider.from_env(transport=transport)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self._working_directory(temp_dir):
+                env = {
+                    LLM_BASE_URL_ENV: "https://llm.example.test/v1/",
+                    LLM_API_KEY_ENV: "test_api_key",
+                    LLM_MODEL_ENV: "test_model",
+                }
+                with patch.dict(os.environ, env, clear=True):
+                    provider = OpenAICompatibleLLMProvider.from_env(transport=transport)
         self.assertEqual("https://llm.example.test/v1", provider.base_url)
         self.assertEqual("test_api_key", provider.api_key)
         self.assertEqual("test_model", provider.model)
+
+    def test_from_env_loads_project_env_file_when_present(self) -> None:
+        transport = FakeTransport({"choices": []})
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, ".env").write_text(
+                "\n".join(
+                    [
+                        "MNEMOSYNE_LLM_BASE_URL=https://llm.example.test/v1",
+                        "MNEMOSYNE_LLM_API_KEY=file_key",
+                        "MNEMOSYNE_LLM_MODEL=file_model",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with self._working_directory(temp_dir):
+                with patch.dict(os.environ, {}, clear=True):
+                    provider = OpenAICompatibleLLMProvider.from_env(transport=transport)
+        self.assertEqual("https://llm.example.test/v1", provider.base_url)
+        self.assertEqual("file_key", provider.api_key)
+        self.assertEqual("file_model", provider.model)
