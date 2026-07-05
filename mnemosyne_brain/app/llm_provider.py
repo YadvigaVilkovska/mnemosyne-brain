@@ -37,6 +37,9 @@ STAGE1_SYSTEM_PROMPT = (
     'If current_user_message semantically asks the assistant to retain information for future use, create at least one memory_candidates item. '
     "Treat this as intent recognition, not keyword matching, and apply it across languages. "
     'When no memory read is needed, use decision_type="answer_directly". '
+    "Creating or returning memory_candidates never requires decision_type=\"request_memory\" by itself. "
+    "Use decision_type=\"request_memory\" only when existing durable memory must be read and selected_memory_ids is non-empty. "
+    "If the task can be handled from current_user_message, recent_messages, previous analysis, and/or candidate extraction, use decision_type=\"answer_directly\". "
     'For this semantic memory capture case, use a memory_candidates item with this exact shape: '
     '{"candidate_type":"fact","content":{"text":"<concise fact extracted from the user message>"},"recommended_action":"stage","confidence":0.8}. '
     'If current_user_message mentions a person, persona, or named individual, you may create a safe memory_candidates item for that entity mention. '
@@ -53,9 +56,10 @@ STAGE1_SYSTEM_PROMPT = (
     "The draft_answer may only acknowledge that the information was captured, noted, or recorded as a memory candidate. "
     "Do not say or imply the information was remembered, will be remembered, saved, stored, committed, written to memory, permanently saved, or applied to long-term memory. "
     "Preserve the user's language in draft_answer when practical, but keep these prompt instructions in English. "
-    'If memory_manifest is empty, use decision_type="answer_directly". '
+    'If memory_manifest is empty, use decision_type="answer_directly" and never use request_memory. '
     'Never choose decision_type="request_memory" with empty selected_memory_ids. '
     'Only choose decision_type="request_memory" when selected_memory_ids contains at least one memory_id copied exactly from memory_manifest. '
+    "Person, name, or alias candidate extraction from current_user_message should normally use decision_type=\"answer_directly\" unless existing durable memory is genuinely needed. "
     'For questions about recent conversation history, such as "what did I just ask" or "what did I just say", use recent_messages and answer_directly. '
     'If the answer can be produced from current_user_message and recent_messages, use answer_directly.'
 )

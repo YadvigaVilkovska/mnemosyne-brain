@@ -121,7 +121,34 @@ class LLMProviderTestCase(unittest.TestCase):
             "selected_memory_ids contains at least one memory_id copied exactly from memory_manifest",
             prompt,
         )
+        self.assertIn('never use request_memory', prompt)
         self.assertIn("recent_messages and answer_directly", prompt)
+
+    def test_stage1_prompt_keeps_candidate_extraction_on_answer_directly_route(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn('memory_candidates never requires decision_type="request_memory" by itself', prompt)
+        self.assertIn('only when existing durable memory must be read and selected_memory_ids is non-empty', prompt)
+        self.assertIn(
+            'If the task can be handled from current_user_message, recent_messages, previous analysis, and/or candidate extraction, use decision_type="answer_directly"',
+            prompt,
+        )
+        self.assertIn(
+            'Person, name, or alias candidate extraction from current_user_message should normally use decision_type="answer_directly" unless existing durable memory is genuinely needed',
+            prompt,
+        )
+
+    def test_stage1_prompt_requires_non_empty_selected_memory_ids_for_request_memory(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn('If memory_manifest is empty, use decision_type="answer_directly" and never use request_memory', prompt)
+        self.assertIn('Never choose decision_type="request_memory" with empty selected_memory_ids', prompt)
+        self.assertIn(
+            'Only choose decision_type="request_memory" when selected_memory_ids contains at least one memory_id copied exactly from memory_manifest',
+            prompt,
+        )
 
     def test_stage1_prompt_contains_semantic_memory_capture_rule(self) -> None:
         provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
