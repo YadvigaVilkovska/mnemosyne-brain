@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextlib import redirect_stderr
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
@@ -33,11 +34,12 @@ class CliTestCase(unittest.TestCase):
         return self._run_cli_args_with_env([message], env)
 
     def _run_cli_args_with_env(self, argv: list[str], env: dict[str, str]) -> tuple[int, str]:
-        output = io.StringIO()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
         with patch.dict(os.environ, env, clear=True):
-            with redirect_stdout(output):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main(argv)
-        return exit_code, output.getvalue()
+        return exit_code, stdout.getvalue() + stderr.getvalue()
 
     def test_cli_prints_response_track_and_no_capsule_for_local_message(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -134,16 +136,20 @@ class CliTestCase(unittest.TestCase):
                     "mnemosyne_brain.app.cli.OpenAICompatibleLLMProvider.from_env",
                     side_effect=fail_with_observed_env,
                 ) as provider_from_env:
-                    with self.assertRaisesRegex(ProviderResponseError, "process value wins"):
-                        self._run_cli_with_env(
-                            "hello",
-                            {
-                                "MNEMOSYNE_DB_PATH": db_path,
-                                "MNEMOSYNE_LLM_BASE_URL": "https://process.example.test/v1",
-                                "MNEMOSYNE_LLM_API_KEY": "process_key",
-                                "MNEMOSYNE_LLM_MODEL": "process_model",
-                            },
-                        )
+                    exit_code, rendered = self._run_cli_with_env(
+                        "hello",
+                        {
+                            "MNEMOSYNE_DB_PATH": db_path,
+                            "MNEMOSYNE_LLM_BASE_URL": "https://process.example.test/v1",
+                            "MNEMOSYNE_LLM_API_KEY": "process_key",
+                            "MNEMOSYNE_LLM_MODEL": "process_model",
+                        },
+                    )
+        self.assertEqual(1, exit_code)
+        self.assertIn("LLM failed", rendered)
+        self.assertIn("user turn saved", rendered)
+        self.assertIn("assistant turn not saved", rendered)
+        self.assertNotIn("Traceback", rendered)
         self.assertEqual(1, provider_from_env.call_count)
         self.assertEqual("https://process.example.test/v1", observed["base_url"])
         self.assertEqual("process_key", observed["api_key"])
@@ -316,9 +322,13 @@ class CliTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "mnemosyne_cli_orchestrator_failure.sqlite3")
             with self._patched_llm_path(error=ProviderResponseError("orchestrator failed")):
-                with self.assertRaisesRegex(ProviderResponseError, "orchestrator failed"):
-                    self._run_cli_with_env("User message.", self._llm_env(db_path))
+                exit_code, rendered = self._run_cli_with_env("User message.", self._llm_env(db_path))
             turns = self._list_turns(db_path)
+        self.assertEqual(1, exit_code)
+        self.assertIn("LLM failed", rendered)
+        self.assertIn("user turn saved", rendered)
+        self.assertIn("assistant turn not saved", rendered)
+        self.assertNotIn("Traceback", rendered)
         self.assertEqual([("user", "user", "User message.")], [
             (turn["input_source"], turn["role"], turn["content_text"]) for turn in turns
         ])
@@ -355,9 +365,14 @@ class CliTestCase(unittest.TestCase):
                 "mnemosyne_brain.app.cli.OpenAICompatibleLLMProvider.from_env",
                 side_effect=ProviderResponseError("configured provider failed"),
             ):
-                with self.assertRaisesRegex(ProviderResponseError, "configured provider failed"):
-                    self._run_cli_with_env("hello", self._llm_env(db_path))
+                exit_code, rendered = self._run_cli_with_env("hello", self._llm_env(db_path))
             turns = self._list_turns(db_path)
+        self.assertEqual(1, exit_code)
+        self.assertIn("LLM failed", rendered)
+        self.assertIn("configured provider failed", rendered)
+        self.assertIn("user turn saved", rendered)
+        self.assertIn("assistant turn not saved", rendered)
+        self.assertNotIn("Traceback", rendered)
         self.assertEqual([("user", "user", "hello")], [
             (turn["input_source"], turn["role"], turn["content_text"]) for turn in turns
         ])

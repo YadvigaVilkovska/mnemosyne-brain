@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sqlite3
+import sys
 from collections.abc import Sequence
 
 from .api.user_message import handle_user_message
@@ -19,6 +20,8 @@ from .llm_provider import (
     LLM_BASE_URL_ENV,
     LLM_MODEL_ENV,
     OpenAICompatibleLLMProvider,
+    ProviderConfigError,
+    ProviderResponseError,
 )
 
 REQUIRED_LLM_ENV_VARS = (LLM_BASE_URL_ENV, LLM_API_KEY_ENV, LLM_MODEL_ENV)
@@ -117,7 +120,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and print a concise user-facing result."""
 
     args = build_parser().parse_args(argv)
-    result = run_message(args.message, thread_id=args.thread_id)
+    try:
+        result = run_message(args.message, thread_id=args.thread_id)
+    except (ProviderConfigError, ProviderResponseError, ValueError) as error:
+        print(
+            f"LLM failed: {error}. user turn saved; assistant turn not saved.",
+            file=sys.stderr,
+        )
+        return 1
     print(f"Assistant: {result.get('response')}")
     print(f"Track: {result['track_id']}")
     print(f"Capsule: {result.get('capsule_id') or 'none'}")
