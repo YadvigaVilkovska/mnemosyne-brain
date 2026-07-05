@@ -28,6 +28,7 @@ python3 -m mnemosyne_brain.app.run_demo
 
 ```bash
 python3 -m mnemosyne_brain.app.cli "Remember that Pav loves architecture diagrams"
+python3 -m mnemosyne_brain.app.cli --thread-id pav-main "Continue this conversation"
 ```
 
 ## CLI LLM Mode

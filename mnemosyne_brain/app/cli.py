@@ -28,11 +28,12 @@ def build_parser() -> argparse.ArgumentParser:
     """Create the CLI parser for one positional message."""
 
     parser = argparse.ArgumentParser(prog="python3 -m mnemosyne_brain.app.cli")
+    parser.add_argument("--thread-id")
     parser.add_argument("message")
     return parser
 
 
-def run_message(message: str) -> dict:
+def run_message(message: str, thread_id: str | None = None) -> dict:
     """Send a single message through the existing graph and repository flow."""
 
     config = load_config()
@@ -41,8 +42,8 @@ def run_message(message: str) -> dict:
         run_migrations(connection)
         repository = SqliteRepository(connection)
         if llm_env_is_configured():
-            return run_llm_message(message, repository)
-        return run_local_message(message, repository)
+            return run_llm_message(message, repository, thread_id=thread_id)
+        return run_local_message(message, repository, thread_id=thread_id)
     finally:
         connection.close()
 
@@ -53,14 +54,14 @@ def llm_env_is_configured() -> bool:
     return all(os.environ.get(name, "").strip() for name in REQUIRED_LLM_ENV_VARS)
 
 
-def run_local_message(message: str, repository: SqliteRepository) -> dict:
+def run_local_message(message: str, repository: SqliteRepository, thread_id: str | None = None) -> dict:
     """Preserve the existing graph-backed local fallback behavior."""
 
     graph = build_graph(repository)
     return handle_user_message(
         {
             "dialogue_id": new_id("dlg"),
-            "thread_id": new_id("thread"),
+            "thread_id": thread_id or new_id("thread"),
             "external_message_id": new_id("msg"),
             "input_text": message,
         },
@@ -68,16 +69,16 @@ def run_local_message(message: str, repository: SqliteRepository) -> dict:
     )
 
 
-def run_llm_message(message: str, repository: SqliteRepository) -> dict:
+def run_llm_message(message: str, repository: SqliteRepository, thread_id: str | None = None) -> dict:
     """Run one message through the staged LLM orchestrator path."""
 
     dialogue_id = new_id("dlg")
-    thread_id = new_id("thread")
+    effective_thread_id = thread_id or new_id("thread")
     owner_user_id = new_id("user")
     with repository.transaction():
         track = repository.bootstrap_or_load_track(
             dialogue_id=dialogue_id,
-            thread_id=thread_id,
+            thread_id=effective_thread_id,
             owner_user_id=owner_user_id,
         )
         repository.persist_dialogue_turn(
@@ -102,8 +103,8 @@ def run_llm_message(message: str, repository: SqliteRepository) -> dict:
             content_text=result["answer"],
         )
     return {
-        "dialogue_id": dialogue_id,
-        "thread_id": thread_id,
+        "dialogue_id": track.dialogue_id,
+        "thread_id": track.thread_id,
         "track_id": track.track_id,
         "turn_id": assistant_turn.turn_id,
         "capsule_id": None,
@@ -115,7 +116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and print a concise user-facing result."""
 
     args = build_parser().parse_args(argv)
-    result = run_message(args.message)
+    result = run_message(args.message, thread_id=args.thread_id)
     print(f"Assistant: {result.get('response')}")
     print(f"Track: {result['track_id']}")
     print(f"Capsule: {result.get('capsule_id') or 'none'}")

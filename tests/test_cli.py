@@ -20,10 +20,13 @@ class CliTestCase(unittest.TestCase):
     """Verifies the CLI sends one message through the graph."""
 
     def _run_cli_with_env(self, message: str, env: dict[str, str]) -> tuple[int, str]:
+        return self._run_cli_args_with_env([message], env)
+
+    def _run_cli_args_with_env(self, argv: list[str], env: dict[str, str]) -> tuple[int, str]:
         output = io.StringIO()
         with patch.dict(os.environ, env, clear=True):
             with redirect_stdout(output):
-                exit_code = main([message])
+                exit_code = main(argv)
         return exit_code, output.getvalue()
 
     def test_cli_prints_response_track_and_no_capsule_for_local_message(self) -> None:
@@ -65,6 +68,67 @@ class CliTestCase(unittest.TestCase):
         self.assertIn("Capsule: none", rendered)
         self.assertEqual(1, calls["provider_from_env"])
         self.assertEqual(["hello"], calls["messages"])
+
+    def test_thread_id_argument_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_thread_arg.sqlite3")
+            with self._patched_llm_path({"answer": "Thread answer."}):
+                exit_code, rendered = self._run_cli_args_with_env(
+                    ["--thread-id", "pav-main", "hello"],
+                    self._llm_env(db_path),
+                )
+        self.assertEqual(0, exit_code)
+        self.assertIn("Assistant: Thread answer.", rendered)
+
+    def test_two_llm_runs_with_same_thread_id_reuse_track(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_same_thread.sqlite3")
+            with self._patched_llm_path({"answer": "Assistant answer."}):
+                _first_exit, first_rendered = self._run_cli_args_with_env(
+                    ["--thread-id", "pav-main", "First message"],
+                    self._llm_env(db_path),
+                )
+                _second_exit, second_rendered = self._run_cli_args_with_env(
+                    ["--thread-id", "pav-main", "Continue this"],
+                    self._llm_env(db_path),
+                )
+        self.assertEqual(self._track_from_output(first_rendered), self._track_from_output(second_rendered))
+
+    def test_second_llm_run_has_previous_turns_available(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_context_thread.sqlite3")
+            with self._patched_llm_path({"answer": "Assistant answer."}) as calls:
+                self._run_cli_args_with_env(
+                    ["--thread-id", "pav-main", "First message"],
+                    self._llm_env(db_path),
+                )
+                self._run_cli_args_with_env(
+                    ["--thread-id", "pav-main", "Continue this"],
+                    self._llm_env(db_path),
+                )
+        self.assertEqual(
+            ["First message", "Assistant answer.", "Continue this"],
+            calls["recent_texts_at_run"][1],
+        )
+
+    def test_llm_path_without_thread_id_creates_new_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_new_threads.sqlite3")
+            with self._patched_llm_path({"answer": "Assistant answer."}):
+                _first_exit, first_rendered = self._run_cli_with_env("First message", self._llm_env(db_path))
+                _second_exit, second_rendered = self._run_cli_with_env("Second message", self._llm_env(db_path))
+        self.assertNotEqual(self._track_from_output(first_rendered), self._track_from_output(second_rendered))
+
+    def test_local_fallback_accepts_thread_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_fallback_thread.sqlite3")
+            exit_code, rendered = self._run_cli_args_with_env(
+                ["--thread-id", "pav-main", "fallback message"],
+                {"MNEMOSYNE_DB_PATH": db_path},
+            )
+        self.assertEqual(0, exit_code)
+        self.assertIn("Assistant: Local answer: fallback message", rendered)
+        self.assertIn("Track: trk_", rendered)
 
     def test_llm_path_persists_one_user_turn_and_one_assistant_turn(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -162,6 +226,12 @@ class CliTestCase(unittest.TestCase):
             "MNEMOSYNE_LLM_MODEL": "test_model",
         }
 
+    def _track_from_output(self, rendered: str) -> str:
+        for line in rendered.splitlines():
+            if line.startswith("Track: "):
+                return line.removeprefix("Track: ")
+        raise AssertionError(f"No Track line found in output: {rendered}")
+
     def _list_turns(self, db_path: str) -> list[sqlite3.Row]:
         connection = sqlite3.connect(db_path)
         connection.row_factory = sqlite3.Row
@@ -189,6 +259,7 @@ class CliTestCase(unittest.TestCase):
             "messages": [],
             "turn_counts_at_run": [],
             "in_transaction_at_run": [],
+            "recent_texts_at_run": [],
         }
 
         class FakeProvider:
@@ -214,6 +285,8 @@ class CliTestCase(unittest.TestCase):
                 calls["messages"].append(current_user_message)
                 calls["turn_counts_at_run"].append(self._repository.count_rows("dialogue_turns"))
                 calls["in_transaction_at_run"].append(self._repository.connection.in_transaction)
+                recent_turns = self._repository.list_recent_turns_for_active_track(track_id, limit=12)
+                calls["recent_texts_at_run"].append([turn.content_text for turn in recent_turns])
                 if error is not None:
                     raise error
                 return result or {"answer": "ok"}
