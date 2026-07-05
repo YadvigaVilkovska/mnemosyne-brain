@@ -37,7 +37,8 @@ class ContextBuilder:
             ),
             "limits": self._limits(),
         }
-        return self._apply_overflow_policy(self._strip_summary_keys(context))
+        self._validate_no_summary_keys(context)
+        return self._apply_overflow_policy(context)
 
     def build_stage2_context(
         self,
@@ -75,7 +76,8 @@ class ContextBuilder:
             "rejected_memory_ids": rejected_memory_ids,
             "limits": self._limits(),
         }
-        return self._apply_overflow_policy(self._strip_summary_keys(context))
+        self._validate_no_summary_keys(context)
+        return self._apply_overflow_policy(context)
 
     def _recent_messages(self, track_id: str) -> list[dict[str, Any]]:
         turns = self._repository.list_recent_turns_for_active_track(
@@ -115,16 +117,16 @@ class ContextBuilder:
                 deduped.append(memory_id)
         return deduped
 
-    def _strip_summary_keys(self, value: Any) -> Any:
+    def _validate_no_summary_keys(self, value: Any) -> None:
         if isinstance(value, dict):
-            return {
-                key: self._strip_summary_keys(item)
-                for key, item in value.items()
-                if key != "summary"
-            }
+            if "summary" in value:
+                raise ValueError("LLM context must not contain a summary key")
+            for item in value.values():
+                self._validate_no_summary_keys(item)
+            return
         if isinstance(value, list):
-            return [self._strip_summary_keys(item) for item in value]
-        return value
+            for item in value:
+                self._validate_no_summary_keys(item)
 
     def _limits(self) -> dict[str, int]:
         return {

@@ -134,7 +134,7 @@ class ContextBuilderTestCase(unittest.TestCase):
             actor_type="system",
             target_type="dialogue_track",
             target_id=self.track.track_id,
-            payload={"intent": "architecture", "summary": "must be stripped"},
+            payload={"intent": "architecture"},
         )
         context = self.builder.build_stage1_context(
             track_id=self.track.track_id,
@@ -219,7 +219,7 @@ class ContextBuilderTestCase(unittest.TestCase):
         self.assertEqual(SELECTED_MEMORY_MAX_ITEMS, len(context["selected_memory_context"]))
         self.assertEqual(memory_ids[SELECTED_MEMORY_MAX_ITEMS:], context["rejected_memory_ids"])
 
-    def test_no_context_contains_summary_key(self) -> None:
+    def test_summary_key_in_context_payload_raises_value_error(self) -> None:
         memory_id = self._add_memory("memory with summary")
         self.repository.insert_audit_event(
             event_type="track_analysis_saved",
@@ -228,6 +228,15 @@ class ContextBuilderTestCase(unittest.TestCase):
             target_id=self.track.track_id,
             payload={"summary": "not allowed", "signal": "allowed"},
         )
+        with self.assertRaises(ValueError):
+            self.builder.build_stage2_context(
+                track_id=self.track.track_id,
+                current_user_message="current",
+                selected_memory_ids=[memory_id],
+            )
+
+    def test_valid_context_does_not_contain_summary_key(self) -> None:
+        memory_id = self._add_memory("memory without forbidden key")
         context = self.builder.build_stage2_context(
             track_id=self.track.track_id,
             current_user_message="current",
