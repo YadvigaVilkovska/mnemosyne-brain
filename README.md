@@ -55,6 +55,8 @@ The isolated provider adapter uses OpenAI-compatible chat completions and is con
 
 Tests use fake HTTP transports only, and secrets must never be committed to git.
 
+The LLM orchestrator connects Stage 1 decisions to optional Stage 2 selected-memory context through the provider adapter interface.
+
 ## DB Path
 
 The demo reads `MNEMOSYNE_DB_PATH`. If it is not set, it uses `./mnemosyne_brain.sqlite3`.
