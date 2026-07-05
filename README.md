@@ -30,6 +30,10 @@ python3 -m mnemosyne_brain.app.run_demo
 python3 -m mnemosyne_brain.app.cli "Remember that Pav loves architecture diagrams"
 ```
 
+## CLI LLM Mode
+
+Without LLM env vars, the CLI uses the local fallback. With `MNEMOSYNE_LLM_BASE_URL`, `MNEMOSYNE_LLM_API_KEY`, and `MNEMOSYNE_LLM_MODEL`, it uses the staged LLM path.
+
 ## Debug LLM Context
 
 ```bash

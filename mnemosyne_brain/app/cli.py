@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 from collections.abc import Sequence
 
@@ -12,6 +13,15 @@ from .contracts.base import new_id
 from .db.migrate import run_migrations
 from .db.repository import SqliteRepository
 from .graph.graph import build_graph
+from .llm_orchestrator import DeterministicLLMOrchestrator
+from .llm_provider import (
+    LLM_API_KEY_ENV,
+    LLM_BASE_URL_ENV,
+    LLM_MODEL_ENV,
+    OpenAICompatibleLLMProvider,
+)
+
+REQUIRED_LLM_ENV_VARS = (LLM_BASE_URL_ENV, LLM_API_KEY_ENV, LLM_MODEL_ENV)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,8 +37,25 @@ def run_message(message: str) -> dict:
 
     config = load_config()
     connection = sqlite3.connect(config.db_path)
-    run_migrations(connection)
-    repository = SqliteRepository(connection)
+    try:
+        run_migrations(connection)
+        repository = SqliteRepository(connection)
+        if llm_env_is_configured():
+            return run_llm_message(message, repository)
+        return run_local_message(message, repository)
+    finally:
+        connection.close()
+
+
+def llm_env_is_configured() -> bool:
+    """Return true only when all required LLM provider variables are present."""
+
+    return all(os.environ.get(name, "").strip() for name in REQUIRED_LLM_ENV_VARS)
+
+
+def run_local_message(message: str, repository: SqliteRepository) -> dict:
+    """Preserve the existing graph-backed local fallback behavior."""
+
     graph = build_graph(repository)
     return handle_user_message(
         {
@@ -39,6 +66,32 @@ def run_message(message: str) -> dict:
         },
         graph=graph,
     )
+
+
+def run_llm_message(message: str, repository: SqliteRepository) -> dict:
+    """Run one message through the staged LLM orchestrator path."""
+
+    dialogue_id = new_id("dlg")
+    thread_id = new_id("thread")
+    owner_user_id = new_id("user")
+    with repository.transaction():
+        track = repository.bootstrap_or_load_track(
+            dialogue_id=dialogue_id,
+            thread_id=thread_id,
+            owner_user_id=owner_user_id,
+        )
+
+    adapter = OpenAICompatibleLLMProvider.from_env()
+    orchestrator = DeterministicLLMOrchestrator(repository, adapter)
+    result = orchestrator.run_turn(track.track_id, message)
+    return {
+        "dialogue_id": dialogue_id,
+        "thread_id": thread_id,
+        "track_id": track.track_id,
+        "turn_id": None,
+        "capsule_id": None,
+        "response": result["answer"],
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
