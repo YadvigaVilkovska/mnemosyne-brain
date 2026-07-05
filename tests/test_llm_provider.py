@@ -123,6 +123,43 @@ class LLMProviderTestCase(unittest.TestCase):
         )
         self.assertIn("recent_messages and answer_directly", prompt)
 
+    def test_stage1_prompt_contains_semantic_memory_capture_rule(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("semantically asks", prompt)
+        self.assertIn("retain information for future use", prompt)
+        self.assertIn("not keyword matching", prompt)
+        self.assertIn("across languages", prompt)
+        self.assertIn("create at least one memory_candidates item", prompt)
+
+    def test_stage1_prompt_contains_required_memory_candidate_shape(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn('"candidate_type":"fact"', prompt)
+        self.assertIn('"content":{"text":"<concise fact extracted from the user message>"}', prompt)
+        self.assertIn('"recommended_action":"stage"', prompt)
+        self.assertIn('"confidence":0.8', prompt)
+
+    def test_stage1_prompt_warns_against_claiming_permanent_memory_application(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("permanently saved", prompt)
+        self.assertIn("written to long-term memory", prompt)
+        self.assertIn("committed as durable memory", prompt)
+        self.assertIn("captured as a memory candidate", prompt)
+
+    def test_stage1_prompt_does_not_contain_hardcoded_user_fact_examples(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertNotIn("Пав", prompt)
+        self.assertNotIn("архитектурные диаграммы", prompt)
+        self.assertNotIn("Pav", prompt)
+        self.assertNotIn("architecture diagrams", prompt)
+
     def test_stage2_valid_fake_http_response_returns_decision(self) -> None:
         provider, transport = self._provider(
             json.dumps(

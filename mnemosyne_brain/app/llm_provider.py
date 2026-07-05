@@ -34,6 +34,14 @@ STAGE1_SYSTEM_PROMPT = (
     '"rationale":null}. '
     'If answering directly, use decision_type="answer_directly", keep selected_memory_ids empty, '
     "and put the user-facing answer in draft_answer. "
+    'If current_user_message semantically asks the assistant to retain information for future use, create at least one memory_candidates item. '
+    "Treat this as intent recognition, not keyword matching, and apply it across languages. "
+    'When no memory read is needed, use decision_type="answer_directly". '
+    'For this semantic memory capture case, use a memory_candidates item with this exact shape: '
+    '{"candidate_type":"fact","content":{"text":"<concise fact extracted from the user message>"},"recommended_action":"stage","confidence":0.8}. '
+    "The content.text value must contain only the concise fact extracted from the user message, not the instruction itself. "
+    "Do not say the information was permanently saved, written to long-term memory, or committed as durable memory. "
+    "The draft_answer may say the information was captured as a memory candidate. "
     'If memory_manifest is empty, use decision_type="answer_directly". '
     'Never choose decision_type="request_memory" with empty selected_memory_ids. '
     'Only choose decision_type="request_memory" when selected_memory_ids contains at least one memory_id copied exactly from memory_manifest. '
