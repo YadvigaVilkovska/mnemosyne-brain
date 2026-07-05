@@ -24,6 +24,12 @@ python3 -m unittest discover -s tests -v
 python3 -m mnemosyne_brain.app.run_demo
 ```
 
+## Send One Local Message
+
+```bash
+python3 -m mnemosyne_brain.app.cli "Remember that Pav loves architecture diagrams"
+```
+
 ## DB Path
 
 The demo reads `MNEMOSYNE_DB_PATH`. If it is not set, it uses `./mnemosyne_brain.sqlite3`.
