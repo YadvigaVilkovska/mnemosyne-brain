@@ -80,15 +80,32 @@ def run_llm_message(message: str, repository: SqliteRepository) -> dict:
             thread_id=thread_id,
             owner_user_id=owner_user_id,
         )
+        repository.persist_dialogue_turn(
+            dialogue_id=track.dialogue_id,
+            track_id=track.track_id,
+            thread_id=track.thread_id,
+            input_source="user",
+            role="user",
+            content_text=message,
+        )
 
     adapter = OpenAICompatibleLLMProvider.from_env()
     orchestrator = DeterministicLLMOrchestrator(repository, adapter)
     result = orchestrator.run_turn(track.track_id, message)
+    with repository.transaction():
+        assistant_turn, _created = repository.persist_dialogue_turn(
+            dialogue_id=track.dialogue_id,
+            track_id=track.track_id,
+            thread_id=track.thread_id,
+            input_source="llm",
+            role="assistant",
+            content_text=result["answer"],
+        )
     return {
         "dialogue_id": dialogue_id,
         "thread_id": thread_id,
         "track_id": track.track_id,
-        "turn_id": None,
+        "turn_id": assistant_turn.turn_id,
         "capsule_id": None,
         "response": result["answer"],
     }
