@@ -155,10 +155,14 @@ class LLMProviderTestCase(unittest.TestCase):
         provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
-        self.assertNotIn("Пав", prompt)
-        self.assertNotIn("архитектурные диаграммы", prompt)
-        self.assertNotIn("Pav", prompt)
-        self.assertNotIn("architecture diagrams", prompt)
+        forbidden_user_fact_examples = (
+            "\u041f\u0430\u0432",
+            "\u0430\u0440\u0445\u0438\u0442\u0435\u043a\u0442\u0443\u0440\u043d\u044b\u0435 \u0434\u0438\u0430\u0433\u0440\u0430\u043c\u043c\u044b",
+            "\u0050\u0061\u0076",
+            "\u0061\u0072\u0063\u0068\u0069\u0074\u0065\u0063\u0074\u0075\u0072\u0065 \u0064\u0069\u0061\u0067\u0072\u0061\u006d\u0073",
+        )
+        for forbidden in forbidden_user_fact_examples:
+            self.assertNotIn(forbidden, prompt)
 
     def test_stage2_valid_fake_http_response_returns_decision(self) -> None:
         provider, transport = self._provider(
