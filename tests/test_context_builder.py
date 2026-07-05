@@ -113,6 +113,24 @@ class ContextBuilderTestCase(unittest.TestCase):
         texts = [message["content_text"] for message in context["recent_messages"]]
         self.assertEqual(["current track message"], texts)
 
+    def test_exclude_turn_id_removes_turn_from_recent_messages(self) -> None:
+        self._add_turn(self.track.track_id, "previous message")
+        excluded_turn, _created = self.repository.persist_dialogue_turn(
+            dialogue_id=self.track.dialogue_id,
+            track_id=self.track.track_id,
+            thread_id=self.track.thread_id,
+            input_source="user",
+            role="user",
+            content_text="current persisted message",
+        )
+        context = self.builder.build_stage1_context(
+            track_id=self.track.track_id,
+            current_user_message="current persisted message",
+            exclude_turn_id=excluded_turn.turn_id,
+        )
+        texts = [message["content_text"] for message in context["recent_messages"]]
+        self.assertEqual(["previous message"], texts)
+
     def test_closed_track_tail_is_not_pulled_into_new_active_track(self) -> None:
         self._add_turn(self.track.track_id, "closed track message")
         self.repository.update_track_status(self.track.track_id, TrackStatus.CLOSED)

@@ -652,21 +652,34 @@ class SqliteRepository:
             raise ValueError(f"Unsupported table for counting: {table_name}")
         return self._connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
 
-    def list_recent_turns_for_active_track(self, track_id: str, *, limit: int) -> list[DialogueTurn]:
+    def list_recent_turns_for_active_track(
+        self,
+        track_id: str,
+        *,
+        limit: int,
+        exclude_turn_id: str | None = None,
+    ) -> list[DialogueTurn]:
         """Return recent dialogue turns for an active working track only."""
 
         track = self.get_track(track_id)
         if track.status is TrackStatus.CLOSED:
             return []
+        params: list[Any] = [track_id]
+        exclude_clause = ""
+        if exclude_turn_id is not None:
+            exclude_clause = "AND turn_id != ?"
+            params.append(exclude_turn_id)
+        params.append(limit)
         rows = self._connection.execute(
-            """
+            f"""
             SELECT *
             FROM dialogue_turns
             WHERE track_id = ?
+              {exclude_clause}
             ORDER BY created_at DESC, turn_id DESC
             LIMIT ?
             """,
-            (track_id, limit),
+            tuple(params),
         ).fetchall()
         return [self._turn_from_row(row) for row in reversed(rows)]
 

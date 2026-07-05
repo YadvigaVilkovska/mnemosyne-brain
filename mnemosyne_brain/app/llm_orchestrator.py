@@ -19,12 +19,19 @@ class DeterministicLLMOrchestrator:
         self._context_builder = ContextBuilder(repository)
         self._adapter = adapter
 
-    def run_turn(self, track_id: str, current_user_message: str) -> dict[str, Any]:
+    def run_turn(
+        self,
+        track_id: str,
+        current_user_message: str,
+        *,
+        exclude_turn_id: str | None = None,
+    ) -> dict[str, Any]:
         """Run Stage 1 and, when requested, Stage 2 without mutating durable state."""
 
         stage1_context = self._context_builder.build_stage1_context(
             track_id=track_id,
             current_user_message=current_user_message,
+            exclude_turn_id=exclude_turn_id,
         )
         stage1_decision = self._adapter.decide_stage1(stage1_context)
         if stage1_decision.decision_type == ROUTE_ANSWER_DIRECTLY:
@@ -44,6 +51,7 @@ class DeterministicLLMOrchestrator:
             track_id=track_id,
             current_user_message=current_user_message,
             selected_memory_ids=stage1_decision.selected_memory_ids,
+            exclude_turn_id=exclude_turn_id,
         )
         stage2_decision = self._adapter.decide_stage2(stage2_context)
         return {

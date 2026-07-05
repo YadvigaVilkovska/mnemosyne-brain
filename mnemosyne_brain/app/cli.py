@@ -82,7 +82,7 @@ def run_llm_message(message: str, repository: SqliteRepository, thread_id: str |
             thread_id=effective_thread_id,
             owner_user_id=owner_user_id,
         )
-        repository.persist_dialogue_turn(
+        user_turn, _created = repository.persist_dialogue_turn(
             dialogue_id=track.dialogue_id,
             track_id=track.track_id,
             thread_id=track.thread_id,
@@ -93,7 +93,7 @@ def run_llm_message(message: str, repository: SqliteRepository, thread_id: str |
 
     adapter = OpenAICompatibleLLMProvider.from_env()
     orchestrator = DeterministicLLMOrchestrator(repository, adapter)
-    result = orchestrator.run_turn(track.track_id, message)
+    result = orchestrator.run_turn(track.track_id, message, exclude_turn_id=user_turn.turn_id)
     with repository.transaction():
         assistant_turn, _created = repository.persist_dialogue_turn(
             dialogue_id=track.dialogue_id,

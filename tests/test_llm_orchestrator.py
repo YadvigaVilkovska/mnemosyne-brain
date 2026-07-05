@@ -173,6 +173,37 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
         )
         self.assertEqual([second_id], result["used_memory_ids"])
 
+    def test_exclude_turn_id_reaches_context_builder_behavior(self) -> None:
+        self.repository.persist_dialogue_turn(
+            dialogue_id=self.track.dialogue_id,
+            track_id=self.track.track_id,
+            thread_id=self.track.thread_id,
+            input_source="user",
+            role="user",
+            content_text="previous message",
+        )
+        excluded_turn, _created = self.repository.persist_dialogue_turn(
+            dialogue_id=self.track.dialogue_id,
+            track_id=self.track.track_id,
+            thread_id=self.track.thread_id,
+            input_source="user",
+            role="user",
+            content_text="current persisted message",
+        )
+        adapter = FakeLLMAdapter(
+            stage1_decision=Stage1Decision(
+                decision_type="answer_directly",
+                draft_answer="Direct answer.",
+            )
+        )
+        DeterministicLLMOrchestrator(self.repository, adapter).run_turn(
+            self.track.track_id,
+            "current persisted message",
+            exclude_turn_id=excluded_turn.turn_id,
+        )
+        texts = [message["content_text"] for message in adapter.stage1_contexts[0]["recent_messages"]]
+        self.assertEqual(["previous message"], texts)
+
     def test_empty_draft_answer_for_answer_directly_fails(self) -> None:
         adapter = FakeLLMAdapter(
             stage1_decision=Stage1Decision(

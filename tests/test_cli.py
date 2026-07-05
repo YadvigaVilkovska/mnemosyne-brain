@@ -260,7 +260,7 @@ class CliTestCase(unittest.TestCase):
                     self._llm_env(db_path),
                 )
         self.assertEqual(
-            ["First message", "Assistant answer.", "Continue this"],
+            ["First message", "Assistant answer."],
             calls["recent_texts_at_run"][1],
         )
 
@@ -434,12 +434,22 @@ class CliTestCase(unittest.TestCase):
                 self._repository = repository
                 self._adapter = adapter
 
-            def run_turn(self, track_id: str, current_user_message: str) -> dict:
+            def run_turn(
+                self,
+                track_id: str,
+                current_user_message: str,
+                *,
+                exclude_turn_id: str | None = None,
+            ) -> dict:
                 calls["orchestrator_runs"] += 1
                 calls["messages"].append(current_user_message)
                 calls["turn_counts_at_run"].append(self._repository.count_rows("dialogue_turns"))
                 calls["in_transaction_at_run"].append(self._repository.connection.in_transaction)
-                recent_turns = self._repository.list_recent_turns_for_active_track(track_id, limit=12)
+                recent_turns = self._repository.list_recent_turns_for_active_track(
+                    track_id,
+                    limit=12,
+                    exclude_turn_id=exclude_turn_id,
+                )
                 calls["recent_texts_at_run"].append([turn.content_text for turn in recent_turns])
                 if error is not None:
                     raise error

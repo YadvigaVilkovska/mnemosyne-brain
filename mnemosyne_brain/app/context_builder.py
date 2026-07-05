@@ -19,14 +19,20 @@ class ContextBuilder:
     def __init__(self, repository: SqliteRepository) -> None:
         self._repository = repository
 
-    def build_stage1_context(self, *, track_id: str, current_user_message: str) -> dict[str, Any]:
+    def build_stage1_context(
+        self,
+        *,
+        track_id: str,
+        current_user_message: str,
+        exclude_turn_id: str | None = None,
+    ) -> dict[str, Any]:
         """Build the manifest-only first-stage context for the current active track."""
 
         context = {
             "stage": "stage1",
             "track_id": track_id,
             "current_user_message": current_user_message,
-            "recent_messages": self._recent_messages(track_id),
+            "recent_messages": self._recent_messages(track_id, exclude_turn_id=exclude_turn_id),
             "previous_analysis": self._repository.get_latest_track_analysis(track_id),
             "pinned_exact_messages": self._repository.list_pinned_exact_messages(
                 track_id,
@@ -46,6 +52,7 @@ class ContextBuilder:
         track_id: str,
         current_user_message: str,
         selected_memory_ids: list[str],
+        exclude_turn_id: str | None = None,
     ) -> dict[str, Any]:
         """Build a second-stage context with only validated selected memories."""
 
@@ -66,7 +73,7 @@ class ContextBuilder:
             "stage": "stage2",
             "track_id": track_id,
             "current_user_message": current_user_message,
-            "recent_messages": self._recent_messages(track_id),
+            "recent_messages": self._recent_messages(track_id, exclude_turn_id=exclude_turn_id),
             "previous_analysis": self._repository.get_latest_track_analysis(track_id),
             "pinned_exact_messages": self._repository.list_pinned_exact_messages(
                 track_id,
@@ -79,10 +86,11 @@ class ContextBuilder:
         self._validate_no_summary_keys(context)
         return self._apply_overflow_policy(context)
 
-    def _recent_messages(self, track_id: str) -> list[dict[str, Any]]:
+    def _recent_messages(self, track_id: str, *, exclude_turn_id: str | None = None) -> list[dict[str, Any]]:
         turns = self._repository.list_recent_turns_for_active_track(
             track_id,
             limit=LLM_CONTEXT_LAST_MESSAGES,
+            exclude_turn_id=exclude_turn_id,
         )
         return [
             {
