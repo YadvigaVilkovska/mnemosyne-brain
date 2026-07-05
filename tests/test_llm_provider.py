@@ -146,10 +146,15 @@ class LLMProviderTestCase(unittest.TestCase):
         provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("captured, noted, or recorded as a memory candidate", prompt)
+        self.assertIn("remembered", prompt)
+        self.assertIn("will be remembered", prompt)
+        self.assertIn("saved", prompt)
+        self.assertIn("stored", prompt)
+        self.assertIn("committed", prompt)
+        self.assertIn("written to memory", prompt)
         self.assertIn("permanently saved", prompt)
-        self.assertIn("written to long-term memory", prompt)
-        self.assertIn("committed as durable memory", prompt)
-        self.assertIn("captured as a memory candidate", prompt)
+        self.assertIn("applied to long-term memory", prompt)
 
     def test_stage1_prompt_does_not_contain_hardcoded_user_fact_examples(self) -> None:
         provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
@@ -163,6 +168,13 @@ class LLMProviderTestCase(unittest.TestCase):
         )
         for forbidden in forbidden_user_fact_examples:
             self.assertNotIn(forbidden, prompt)
+
+    def test_stage1_prompt_keeps_provider_instructions_in_english_only(self) -> None:
+        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("keep these prompt instructions in English", prompt)
+        self.assertNotRegex(prompt, r"[\u0400-\u04FF]")
 
     def test_stage2_valid_fake_http_response_returns_decision(self) -> None:
         provider, transport = self._provider(

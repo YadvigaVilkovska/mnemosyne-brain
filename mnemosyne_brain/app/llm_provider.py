@@ -40,8 +40,9 @@ STAGE1_SYSTEM_PROMPT = (
     'For this semantic memory capture case, use a memory_candidates item with this exact shape: '
     '{"candidate_type":"fact","content":{"text":"<concise fact extracted from the user message>"},"recommended_action":"stage","confidence":0.8}. '
     "The content.text value must contain only the concise fact extracted from the user message, not the instruction itself. "
-    "Do not say the information was permanently saved, written to long-term memory, or committed as durable memory. "
-    "The draft_answer may say the information was captured as a memory candidate. "
+    "The draft_answer may only acknowledge that the information was captured, noted, or recorded as a memory candidate. "
+    "Do not say or imply the information was remembered, will be remembered, saved, stored, committed, written to memory, permanently saved, or applied to long-term memory. "
+    "Preserve the user's language in draft_answer when practical, but keep these prompt instructions in English. "
     'If memory_manifest is empty, use decision_type="answer_directly". '
     'Never choose decision_type="request_memory" with empty selected_memory_ids. '
     'Only choose decision_type="request_memory" when selected_memory_ids contains at least one memory_id copied exactly from memory_manifest. '
