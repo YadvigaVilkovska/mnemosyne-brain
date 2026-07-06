@@ -382,6 +382,10 @@ class CliTestCase(unittest.TestCase):
         self.assertIsNone(payload["stage2_decision"])
         self.assertEqual(stage1_facts, payload["extracted_facts"])
         self.assertEqual(stage1_candidates, payload["memory_candidates"])
+        self.assertEqual(
+            {"status": "ok", "reason": "Durable information extracted."},
+            payload["stage1_decision"]["news_extraction"],
+        )
 
     def test_stage2_analysis_combines_facts_and_candidates_in_order(self) -> None:
         stage1_facts = [{"fact": "stage1_a"}, {"fact": "stage1_b"}]
@@ -419,6 +423,14 @@ class CliTestCase(unittest.TestCase):
         self.assertIsNotNone(payload["stage2_decision"])
         self.assertEqual(stage1_facts + stage2_facts, payload["extracted_facts"])
         self.assertEqual(stage1_candidates + stage2_candidates, payload["memory_candidates"])
+        self.assertEqual(
+            {"status": "ok", "reason": "Durable information extracted."},
+            payload["stage1_decision"]["news_extraction"],
+        )
+        self.assertEqual(
+            {"status": "ok", "reason": "Durable information extracted."},
+            payload["stage2_decision"]["news_extraction"],
+        )
 
     def test_successful_llm_turn_persists_one_valid_stage1_memory_candidate(self) -> None:
         content = {"subject": "Pav", "predicate": "likes", "object": "architecture diagrams"}
@@ -915,9 +927,31 @@ class CliTestCase(unittest.TestCase):
                 "draft_answer": answer,
                 "extracted_facts": [],
                 "memory_candidates": [],
+                "news_extraction": {
+                    "status": "fail",
+                    "reason": "No durable information extracted.",
+                },
                 "rationale": None,
             },
             "stage2_decision": None,
+        }
+
+    def _news_extraction_for(self, memory_candidates: list | None) -> dict:
+        candidates = memory_candidates or []
+        return {
+            "status": "ok" if candidates else "fail",
+            "reason": "Durable information extracted." if candidates else "No durable information extracted.",
+        }
+
+    def _with_news_extraction(self, decision: dict | None) -> dict | None:
+        if decision is None:
+            return None
+        return {
+            **decision,
+            "news_extraction": decision.get(
+                "news_extraction",
+                self._news_extraction_for(decision.get("memory_candidates")),
+            ),
         }
 
     def _llm_result(self, overrides: dict | None) -> dict:
@@ -929,6 +963,8 @@ class CliTestCase(unittest.TestCase):
                     **result["stage1_decision"],
                     "draft_answer": overrides["answer"],
                 }
+        result["stage1_decision"] = self._with_news_extraction(result["stage1_decision"])
+        result["stage2_decision"] = self._with_news_extraction(result["stage2_decision"])
         return result
 
     @contextmanager

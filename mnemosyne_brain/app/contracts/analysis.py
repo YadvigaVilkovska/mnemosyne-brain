@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import field_validator, model_validator
 
-from .base import EphemeralAnalysisModel, PersistedModel, StrictContractModel
+from .base import SCHEMA_VERSION, EphemeralAnalysisModel, PersistedModel, StrictContractModel
 
 
 class ConflictAction(StrEnum):
@@ -39,6 +39,40 @@ class ExecutorFeedbackAnalysis(EphemeralAnalysisModel):
     event_id: str
     should_update_track: bool
     local_answer: str
+
+
+class NewsExtraction(StrictContractModel):
+    """Diagnostic status for whether durable candidates were extracted."""
+
+    status: Literal["ok", "fail"]
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        """Require a useful reason for both extraction outcomes."""
+
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("news_extraction.reason must not be empty")
+        return stripped
+
+
+def _validate_schema_version(schema_version: str) -> None:
+    """Reject stale explicit schema versions on persisted LLM decisions."""
+
+    if schema_version != SCHEMA_VERSION:
+        raise ValueError(f"schema_version must be {SCHEMA_VERSION}")
+
+
+def _validate_news_extraction(memory_candidates: list[dict], news_extraction: NewsExtraction) -> None:
+    """Keep news_extraction.status aligned with emitted memory candidates."""
+
+    has_candidates = bool(memory_candidates)
+    if has_candidates and news_extraction.status != "ok":
+        raise ValueError("news_extraction.status must be ok when memory_candidates is non-empty")
+    if not has_candidates and news_extraction.status != "fail":
+        raise ValueError("news_extraction.status must be fail when memory_candidates is empty")
 
 
 class Stage0DialogueAct(StrEnum):
@@ -191,6 +225,7 @@ class Stage1Decision(PersistedModel):
     draft_answer: str | None = None
     extracted_facts: list[dict] = []
     memory_candidates: list[dict] = []
+    news_extraction: NewsExtraction
     rationale: str | None = None
 
     @model_validator(mode="after")
@@ -209,6 +244,8 @@ class Stage1Decision(PersistedModel):
             raise ValueError("answer_directly decisions must not select memory ids")
         if self.decision_type == "request_memory" and not self.selected_memory_ids:
             raise ValueError("request_memory decisions require selected_memory_ids")
+        _validate_schema_version(self.schema_version)
+        _validate_news_extraction(self.memory_candidates, self.news_extraction)
         return self
 
 
@@ -218,6 +255,7 @@ class Stage2Decision(PersistedModel):
     final_answer: str
     extracted_facts: list[dict] = []
     memory_candidates: list[dict] = []
+    news_extraction: NewsExtraction
     used_memory_ids: list[str] = []
     rationale: str | None = None
 
@@ -232,8 +270,8 @@ class Stage2Decision(PersistedModel):
         return stripped
 
     @model_validator(mode="after")
-    def dedupe_used_memory_ids(self) -> "Stage2Decision":
-        """Dedupe used memory ids while preserving LLM-provided order."""
+    def validate_decision(self) -> "Stage2Decision":
+        """Validate schema, news extraction, and used memory ids."""
 
         deduped_ids: list[str] = []
         seen_ids: set[str] = set()
@@ -242,4 +280,6 @@ class Stage2Decision(PersistedModel):
                 seen_ids.add(memory_id)
                 deduped_ids.append(memory_id)
         object.__setattr__(self, "used_memory_ids", deduped_ids)
+        _validate_schema_version(self.schema_version)
+        _validate_news_extraction(self.memory_candidates, self.news_extraction)
         return self

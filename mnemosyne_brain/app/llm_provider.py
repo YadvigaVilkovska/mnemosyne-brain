@@ -75,12 +75,22 @@ STAGE1_SYSTEM_PROMPT = (
     "Do not use markdown. "
     "Do not include summary. "
     "Allowed JSON shape: "
-    '{"decision_type":"answer_directly|request_memory",'
+    '{"schema_version":"0.4.3",'
+    '"decision_type":"answer_directly|request_memory",'
     '"selected_memory_ids":[],'
     '"draft_answer":null,'
     '"extracted_facts":[],'
     '"memory_candidates":[],'
+    '"news_extraction":{"status":"ok|fail","reason":"short diagnostic reason"},'
     '"rationale":null}. '
+    "Every Stage 1 response must include news_extraction. "
+    'Use news_extraction.status="ok" only when memory_candidates is non-empty. '
+    'Use news_extraction.status="fail" when memory_candidates is empty, and explain why in news_extraction.reason. '
+    "Empty memory_candidates must never be silent. "
+    "A fail news_extraction status is diagnostic only; it is not a CLI, provider, or application failure. "
+    "draft_answer should still be produced normally when decision_type is answer_directly. "
+    "Sensitive adult or private life context is not forbidden and must not be discarded if it is extractable. "
+    'Credentials and secrets must not be stored as ordinary memory; if unsafe to store, use memory_candidates=[] and news_extraction.status="fail" with reason. '
     "If stage0_nlu_frame is present, use normalized_intent as the primary interpretation of current_user_message. "
     "Answer normalized intent, not just surface wording. "
     "Use dialogue_acts and new_information from stage0_nlu_frame to decide whether to answer, clarify, or emit candidates. "
@@ -157,11 +167,21 @@ STAGE2_SYSTEM_PROMPT = (
     "Do not use markdown. "
     "Do not include summary. "
     "Allowed JSON shape: "
-    '{"final_answer":"",'
+    '{"schema_version":"0.4.3",'
+    '"final_answer":"",'
     '"extracted_facts":[],'
     '"memory_candidates":[],'
+    '"news_extraction":{"status":"ok|fail","reason":"short diagnostic reason"},'
     '"used_memory_ids":[],'
     '"rationale":null}. '
+    "Every Stage 2 response must include news_extraction. "
+    'Use news_extraction.status="ok" only when memory_candidates is non-empty. '
+    'Use news_extraction.status="fail" when memory_candidates is empty, and explain why in news_extraction.reason. '
+    "Empty memory_candidates must never be silent. "
+    "A fail news_extraction status is diagnostic only; it is not a CLI, provider, or application failure. "
+    "final_answer should still be produced normally. "
+    "Sensitive adult or private life context is not forbidden and must not be discarded if it is extractable. "
+    'Credentials and secrets must not be stored as ordinary memory; if unsafe to store, use memory_candidates=[] and news_extraction.status="fail" with reason. '
     "Put the final user-facing answer in final_answer."
 )
 

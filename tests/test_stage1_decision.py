@@ -13,10 +13,17 @@ from mnemosyne_brain.app.contracts.base import SCHEMA_VERSION
 class Stage1DecisionTestCase(unittest.TestCase):
     """Verifies the future LLM Stage 1 decision contract."""
 
+    def _fail_extraction(self) -> dict:
+        return {"status": "fail", "reason": "No durable information extracted."}
+
+    def _ok_extraction(self) -> dict:
+        return {"status": "ok", "reason": "Durable information extracted."}
+
     def test_valid_answer_directly(self) -> None:
         decision = Stage1Decision(
             decision_type="answer_directly",
             draft_answer="Use a local answer.",
+            news_extraction=self._fail_extraction(),
         )
         self.assertEqual("answer_directly", decision.decision_type)
         self.assertEqual([], decision.selected_memory_ids)
@@ -25,24 +32,27 @@ class Stage1DecisionTestCase(unittest.TestCase):
         decision = Stage1Decision(
             decision_type="request_memory",
             selected_memory_ids=["mem_1"],
+            news_extraction=self._fail_extraction(),
         )
         self.assertEqual(["mem_1"], decision.selected_memory_ids)
 
     def test_request_memory_without_selected_ids_fails(self) -> None:
         with self.assertRaises(ValidationError):
-            Stage1Decision(decision_type="request_memory")
+            Stage1Decision(decision_type="request_memory", news_extraction=self._fail_extraction())
 
     def test_answer_directly_with_selected_ids_fails(self) -> None:
         with self.assertRaises(ValidationError):
             Stage1Decision(
                 decision_type="answer_directly",
                 selected_memory_ids=["mem_1"],
+                news_extraction=self._fail_extraction(),
             )
 
     def test_duplicate_selected_ids_are_deduped_preserving_order(self) -> None:
         decision = Stage1Decision(
             decision_type="request_memory",
             selected_memory_ids=["mem_2", "mem_1", "mem_2", "mem_1"],
+            news_extraction=self._fail_extraction(),
         )
         self.assertEqual(["mem_2", "mem_1"], decision.selected_memory_ids)
 
@@ -50,12 +60,64 @@ class Stage1DecisionTestCase(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Stage1Decision(
                 decision_type="answer_directly",
+                news_extraction=self._fail_extraction(),
                 summary="not allowed",
             )
 
     def test_schema_version_exists(self) -> None:
-        decision = Stage1Decision(decision_type="answer_directly")
+        decision = Stage1Decision(decision_type="answer_directly", news_extraction=self._fail_extraction())
         self.assertEqual(SCHEMA_VERSION, decision.schema_version)
+        self.assertEqual("0.4.3", decision.schema_version)
+
+    def test_explicit_stale_schema_version_fails(self) -> None:
+        with self.assertRaises(ValidationError):
+            Stage1Decision(
+                schema_version="0.4.2",
+                decision_type="answer_directly",
+                news_extraction=self._fail_extraction(),
+            )
+
+    def test_missing_news_extraction_fails(self) -> None:
+        with self.assertRaises(ValidationError):
+            Stage1Decision(decision_type="answer_directly")
+
+    def test_empty_news_extraction_reason_fails(self) -> None:
+        with self.assertRaises(ValidationError):
+            Stage1Decision(
+                decision_type="answer_directly",
+                news_extraction={"status": "fail", "reason": "   "},
+            )
+
+    def test_empty_memory_candidates_with_fail_news_extraction_passes(self) -> None:
+        decision = Stage1Decision(
+            decision_type="answer_directly",
+            news_extraction=self._fail_extraction(),
+        )
+        self.assertEqual("fail", decision.news_extraction.status)
+
+    def test_empty_memory_candidates_with_ok_news_extraction_fails(self) -> None:
+        with self.assertRaises(ValidationError):
+            Stage1Decision(
+                decision_type="answer_directly",
+                news_extraction=self._ok_extraction(),
+            )
+
+    def test_non_empty_memory_candidates_with_ok_news_extraction_passes(self) -> None:
+        candidate = {"candidate_type": "fact", "content": {"text": "A durable fact."}}
+        decision = Stage1Decision(
+            decision_type="answer_directly",
+            memory_candidates=[candidate],
+            news_extraction=self._ok_extraction(),
+        )
+        self.assertEqual([candidate], decision.memory_candidates)
+
+    def test_non_empty_memory_candidates_with_fail_news_extraction_fails(self) -> None:
+        with self.assertRaises(ValidationError):
+            Stage1Decision(
+                decision_type="answer_directly",
+                memory_candidates=[{"candidate_type": "fact", "content": {"text": "A durable fact."}}],
+                news_extraction=self._fail_extraction(),
+            )
 
 
 class Stage0NLUFrameTestCase(unittest.TestCase):

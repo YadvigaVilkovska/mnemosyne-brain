@@ -125,9 +125,24 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
             return any(self._contains_key(item, key) for item in value)
         return False
 
+    def _news_extraction_for(self, memory_candidates: list[dict] | None = None) -> dict:
+        candidates = memory_candidates or []
+        return {
+            "status": "ok" if candidates else "fail",
+            "reason": "Durable information extracted." if candidates else "No durable information extracted.",
+        }
+
+    def _stage1_decision(self, **kwargs: Any) -> Stage1Decision:
+        kwargs.setdefault("news_extraction", self._news_extraction_for(kwargs.get("memory_candidates")))
+        return Stage1Decision(**kwargs)
+
+    def _stage2_decision(self, **kwargs: Any) -> Stage2Decision:
+        kwargs.setdefault("news_extraction", self._news_extraction_for(kwargs.get("memory_candidates")))
+        return Stage2Decision(**kwargs)
+
     def test_answer_directly_returns_draft_answer_and_does_not_call_stage2(self) -> None:
         adapter = FakeLLMAdapter(
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="answer_directly",
                 draft_answer="  Direct local answer.  ",
             )
@@ -148,11 +163,11 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
     def test_request_memory_builds_stage2_and_returns_final_answer(self) -> None:
         memory_id = self._add_memory("Pav loves architecture diagrams")
         adapter = FakeLLMAdapter(
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="request_memory",
                 selected_memory_ids=[memory_id],
             ),
-            stage2_decision=Stage2Decision(
+            stage2_decision=self._stage2_decision(
                 final_answer="Pav loves architecture diagrams.",
                 used_memory_ids=[memory_id],
             ),
@@ -171,11 +186,11 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
         first_id = self._add_memory("first")
         second_id = self._add_memory("second")
         adapter = FakeLLMAdapter(
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="request_memory",
                 selected_memory_ids=[second_id, first_id],
             ),
-            stage2_decision=Stage2Decision(final_answer="Done."),
+            stage2_decision=self._stage2_decision(final_answer="Done."),
         )
         result = DeterministicLLMOrchestrator(self.repository, adapter).run_turn(
             self.track.track_id,
@@ -189,7 +204,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
 
     def test_run_stage0_nlu_is_called_before_stage1(self) -> None:
         adapter = FakeLLMAdapter(
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="answer_directly",
                 draft_answer="Direct answer.",
             )
@@ -235,7 +250,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
         )
         adapter = FakeLLMAdapter(
             stage0_frame=stage0_frame,
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="answer_directly",
                 draft_answer="Direct answer.",
             ),
@@ -253,11 +268,11 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
         first_id = self._add_memory("first")
         second_id = self._add_memory("second")
         adapter = FakeLLMAdapter(
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="request_memory",
                 selected_memory_ids=[first_id, second_id],
             ),
-            stage2_decision=Stage2Decision(
+            stage2_decision=self._stage2_decision(
                 final_answer="Done.",
                 used_memory_ids=[second_id],
             ),
@@ -270,7 +285,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
 
     def test_final_answer_still_comes_from_stage1_or_stage2(self) -> None:
         direct_adapter = FakeLLMAdapter(
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="answer_directly",
                 draft_answer="Direct answer.",
             )
@@ -283,11 +298,11 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
 
         memory_id = self._add_memory("memory")
         memory_adapter = FakeLLMAdapter(
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="request_memory",
                 selected_memory_ids=[memory_id],
             ),
-            stage2_decision=Stage2Decision(
+            stage2_decision=self._stage2_decision(
                 final_answer="Stage 2 answer.",
                 used_memory_ids=[memory_id],
             ),
@@ -323,7 +338,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
                     },
                 }
             ),
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="answer_directly",
                 draft_answer="Direct answer.",
                 memory_candidates=[{"candidate_type": "name_alias", "content": {"raw_name": "X"}}],
@@ -343,7 +358,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
         before_candidates = self.repository.count_rows("memory_candidates")
         before_items = self.repository.count_rows("memory_items")
         adapter = FakeLLMAdapter(
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="answer_directly",
                 draft_answer="Direct answer.",
             )
@@ -373,7 +388,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
             content_text="current persisted message",
         )
         adapter = FakeLLMAdapter(
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="answer_directly",
                 draft_answer="Direct answer.",
             )
@@ -388,7 +403,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
 
     def test_empty_draft_answer_for_answer_directly_fails(self) -> None:
         adapter = FakeLLMAdapter(
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="answer_directly",
                 draft_answer="   ",
             )
@@ -402,7 +417,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
     def test_orchestrator_does_not_mutate_dialogue_turns(self) -> None:
         before = self.repository.count_rows("dialogue_turns")
         adapter = FakeLLMAdapter(
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="answer_directly",
                 draft_answer="Direct answer.",
             )
@@ -416,11 +431,11 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
     def test_result_contains_no_summary_key(self) -> None:
         memory_id = self._add_memory("memory")
         adapter = FakeLLMAdapter(
-            stage1_decision=Stage1Decision(
+            stage1_decision=self._stage1_decision(
                 decision_type="request_memory",
                 selected_memory_ids=[memory_id],
             ),
-            stage2_decision=Stage2Decision(
+            stage2_decision=self._stage2_decision(
                 final_answer="Done.",
                 used_memory_ids=[memory_id],
             ),

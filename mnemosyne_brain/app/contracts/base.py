@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = "0.4.2"
+SCHEMA_VERSION = "0.4.3"
 
 
 def server_now() -> str:

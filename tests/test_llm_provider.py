@@ -84,6 +84,35 @@ class LLMProviderTestCase(unittest.TestCase):
         )
         return provider, transport
 
+    def _stage1_response(self, *, memory_candidates: list[dict] | None = None) -> str:
+        candidates = memory_candidates or []
+        return json.dumps(
+            {
+                "schema_version": "0.4.3",
+                "decision_type": "answer_directly",
+                "draft_answer": "Done.",
+                "memory_candidates": candidates,
+                "news_extraction": {
+                    "status": "ok" if candidates else "fail",
+                    "reason": "Durable information extracted." if candidates else "No durable information extracted.",
+                },
+            }
+        )
+
+    def _stage2_response(self, *, memory_candidates: list[dict] | None = None) -> str:
+        candidates = memory_candidates or []
+        return json.dumps(
+            {
+                "schema_version": "0.4.3",
+                "final_answer": "Done.",
+                "memory_candidates": candidates,
+                "news_extraction": {
+                    "status": "ok" if candidates else "fail",
+                    "reason": "Durable information extracted." if candidates else "No durable information extracted.",
+                },
+            }
+        )
+
     def test_missing_env_vars_fail_clearly(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             with self._working_directory(temp_dir):
@@ -95,8 +124,14 @@ class LLMProviderTestCase(unittest.TestCase):
         provider, transport = self._provider(
             json.dumps(
                 {
+                    "schema_version": "0.4.3",
                     "decision_type": "answer_directly",
                     "draft_answer": "Already enough context.",
+                    "memory_candidates": [],
+                    "news_extraction": {
+                        "status": "fail",
+                        "reason": "No durable information extracted.",
+                    },
                 }
             )
         )
@@ -146,10 +181,11 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertEqual(1, len(transport.calls))
 
     def test_stage1_prompt_rejects_wrapped_contract_and_includes_memory_selection_rules(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("Do not wrap in Stage1Decision", prompt)
+        self.assertIn('"schema_version":"0.4.3"', prompt)
         self.assertIn("decision_type", prompt)
         self.assertIn("draft_answer", prompt)
         self.assertIn("If memory_manifest is empty, use decision_type=\"answer_directly\"", prompt)
@@ -160,6 +196,19 @@ class LLMProviderTestCase(unittest.TestCase):
         )
         self.assertIn('never use request_memory', prompt)
         self.assertIn("recent_messages and answer_directly", prompt)
+
+    def test_stage1_prompt_requires_news_extraction_status(self) -> None:
+        provider, transport = self._provider(self._stage1_response())
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("Every Stage 1 response must include news_extraction", prompt)
+        self.assertIn('news_extraction.status="ok" only when memory_candidates is non-empty', prompt)
+        self.assertIn('news_extraction.status="fail" when memory_candidates is empty', prompt)
+        self.assertIn("Empty memory_candidates must never be silent", prompt)
+        self.assertIn("diagnostic only; it is not a CLI, provider, or application failure", prompt)
+        self.assertIn("draft_answer should still be produced normally", prompt)
+        self.assertIn("Sensitive adult or private life context is not forbidden", prompt)
+        self.assertIn("Credentials and secrets must not be stored as ordinary memory", prompt)
 
     def test_stage0_prompt_contains_nlu_frame_guidance(self) -> None:
         provider, transport = self._provider(
@@ -201,7 +250,7 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn("Do not select memory IDs yet", prompt)
 
     def test_stage1_prompt_uses_stage0_frame_when_present(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("If stage0_nlu_frame is present, use normalized_intent as the primary interpretation", prompt)
@@ -211,7 +260,7 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn("Do not treat Stage 0 as final truth; it is an interpretation frame", prompt)
 
     def test_stage1_prompt_keeps_candidate_extraction_on_answer_directly_route(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn('memory_candidates never requires decision_type="request_memory" by itself', prompt)
@@ -226,7 +275,7 @@ class LLMProviderTestCase(unittest.TestCase):
         )
 
     def test_stage1_prompt_requires_non_empty_selected_memory_ids_for_request_memory(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn('If memory_manifest is empty, use decision_type="answer_directly" and never use request_memory', prompt)
@@ -237,7 +286,7 @@ class LLMProviderTestCase(unittest.TestCase):
         )
 
     def test_stage1_prompt_contains_semantic_memory_capture_rule(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("semantically asks", prompt)
@@ -247,7 +296,7 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn("create at least one memory_candidates item", prompt)
 
     def test_stage1_prompt_contains_required_memory_candidate_shape(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn('"candidate_type":"fact"', prompt)
@@ -256,7 +305,7 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn('"confidence":0.8', prompt)
 
     def test_stage1_prompt_supports_safe_person_mention_candidates(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("mentions a person, persona, or named individual", prompt)
@@ -272,7 +321,7 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn("must still be refused or safely redirected in draft_answer", prompt)
 
     def test_stage1_prompt_supports_safe_relation_candidates(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("If current_user_message states a safe non-sensitive relationship", prompt)
@@ -285,7 +334,7 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn('"confidence":0.8', prompt)
 
     def test_stage1_prompt_supports_sensitive_biographical_context_without_moralizing(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("Sensitive context is not automatically discarded", prompt)
@@ -299,7 +348,7 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn('do not use save_immediately', prompt)
 
     def test_stage1_prompt_contains_safe_person_and_alias_candidate_shapes(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn('"candidate_type":"person"', prompt)
@@ -308,13 +357,13 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn('"content":{"raw_name":"<name or alias exactly as mentioned>"}', prompt)
 
     def test_stage1_prompt_forbids_fact_candidate_for_sensitive_claim(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("Do not create a fact candidate that stores the sensitive claim itself", prompt)
 
     def test_stage1_prompt_warns_against_claiming_permanent_memory_application(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("captured, noted, or recorded as a memory candidate", prompt)
@@ -328,7 +377,7 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn("applied to long-term memory", prompt)
 
     def test_stage1_prompt_does_not_contain_hardcoded_user_fact_examples(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         forbidden_user_fact_examples = (
@@ -341,14 +390,14 @@ class LLMProviderTestCase(unittest.TestCase):
             self.assertNotIn(forbidden, prompt)
 
     def test_stage1_prompt_keeps_provider_instructions_in_english_only(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("keep these prompt instructions in English", prompt)
         self.assertNotRegex(prompt, r"[\u0400-\u04FF]")
 
     def test_stage1_prompt_guides_curious_safe_follow_up_behavior(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("Show strong, respectful curiosity about the user", prompt)
@@ -361,7 +410,7 @@ class LLMProviderTestCase(unittest.TestCase):
         )
 
     def test_stage1_prompt_uses_context_without_re_emitting_candidates_from_old_context(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn(
@@ -379,7 +428,7 @@ class LLMProviderTestCase(unittest.TestCase):
         )
 
     def test_stage1_prompt_answers_interest_follow_ups_naturally_with_safe_curiosity(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn(
@@ -397,7 +446,7 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn("Avoid evasive repetition", prompt)
 
     def test_stage1_prompt_keeps_sensitive_boundaries_while_allowing_safe_candidates(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn(
@@ -411,7 +460,7 @@ class LLMProviderTestCase(unittest.TestCase):
         )
 
     def test_stage1_prompt_guides_do_you_know_behavior(self) -> None:
-        provider, transport = self._provider(json.dumps({"decision_type": "answer_directly", "draft_answer": "Done."}))
+        provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("answer yes only if the person is known from recent_messages", prompt)
@@ -427,7 +476,13 @@ class LLMProviderTestCase(unittest.TestCase):
         provider, transport = self._provider(
             json.dumps(
                 {
+                    "schema_version": "0.4.3",
                     "final_answer": "Provider returned a final answer.",
+                    "memory_candidates": [],
+                    "news_extraction": {
+                        "status": "fail",
+                        "reason": "No durable information extracted.",
+                    },
                     "used_memory_ids": ["mem_1"],
                 }
             )
@@ -439,11 +494,25 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertEqual(1, len(transport.calls))
 
     def test_stage2_prompt_rejects_wrapped_contract_and_names_final_answer(self) -> None:
-        provider, transport = self._provider(json.dumps({"final_answer": "Done."}))
+        provider, transport = self._provider(self._stage2_response())
         provider.decide_stage2({"stage": "stage2"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("Do not wrap in Stage2Decision", prompt)
+        self.assertIn('"schema_version":"0.4.3"', prompt)
         self.assertIn("final_answer", prompt)
+
+    def test_stage2_prompt_requires_news_extraction_status(self) -> None:
+        provider, transport = self._provider(self._stage2_response())
+        provider.decide_stage2({"stage": "stage2"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("Every Stage 2 response must include news_extraction", prompt)
+        self.assertIn('news_extraction.status="ok" only when memory_candidates is non-empty', prompt)
+        self.assertIn('news_extraction.status="fail" when memory_candidates is empty', prompt)
+        self.assertIn("Empty memory_candidates must never be silent", prompt)
+        self.assertIn("diagnostic only; it is not a CLI, provider, or application failure", prompt)
+        self.assertIn("final_answer should still be produced normally", prompt)
+        self.assertIn("Sensitive adult or private life context is not forbidden", prompt)
+        self.assertIn("Credentials and secrets must not be stored as ordinary memory", prompt)
 
     def test_stage0_response_with_draft_answer_fails(self) -> None:
         provider, _transport = self._provider(
@@ -525,7 +594,7 @@ class LLMProviderTestCase(unittest.TestCase):
             provider.decide_stage1({"stage": "stage1"})
 
     def test_no_real_network_call_is_made_in_tests(self) -> None:
-        provider, transport = self._provider(json.dumps({"final_answer": "Done."}))
+        provider, transport = self._provider(self._stage2_response())
         provider.decide_stage2({"stage": "stage2"})
         self.assertEqual(1, len(transport.calls))
         self.assertIsInstance(transport, FakeTransport)
