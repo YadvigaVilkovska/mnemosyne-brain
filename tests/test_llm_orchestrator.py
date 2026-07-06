@@ -5,7 +5,12 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from mnemosyne_brain.app.contracts.analysis import Stage0NLUFrame, Stage1Decision, Stage2Decision
+from mnemosyne_brain.app.contracts.analysis import (
+    PhaseV1Stage0SignalExtraction,
+    Stage0NLUFrame,
+    Stage1Decision,
+    Stage2Decision,
+)
 from mnemosyne_brain.app.contracts.base import new_id, server_now
 from mnemosyne_brain.app.contracts.memory import MemoryCandidate
 from mnemosyne_brain.app.contracts.provenance import Provenance
@@ -369,6 +374,86 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
         )
         self.assertEqual(before_candidates, self.repository.count_rows("memory_candidates"))
         self.assertEqual(before_items, self.repository.count_rows("memory_items"))
+
+    def test_optional_phase_v1_current_signal_is_included_in_result(self) -> None:
+        current_signal = PhaseV1Stage0SignalExtraction(
+            entities=[
+                {
+                    "id": "e1",
+                    "mention": "Lena",
+                    "entity_type": "person",
+                    "source_span": "ты знаешь лену",
+                    "resolution_status": "literal",
+                    "resolved_to": None,
+                }
+            ],
+            information_signals=[
+                {
+                    "id": "s1",
+                    "source_span": "ты знаешь лену",
+                    "signal_type": "person_mention",
+                    "about_entity_ids": ["e1"],
+                    "signal_scope": "current_message",
+                    "polarity": "questioned",
+                    "epistemic_status": "user_question",
+                    "extraction_note": "The user asks about a mentioned person.",
+                }
+            ],
+            unresolved_references=[],
+            ambiguous_references=[],
+        )
+
+        class AdapterWithCurrentSignal(FakeLLMAdapter):
+            def run_phase_v1_stage0_signal_extraction(self, context: dict[str, Any]) -> PhaseV1Stage0SignalExtraction:
+                self.stage0_contexts.append(context)
+                return current_signal
+
+        adapter = AdapterWithCurrentSignal(
+            stage1_decision=self._stage1_decision(
+                decision_type="answer_directly",
+                draft_answer="Direct answer.",
+            )
+        )
+        result = DeterministicLLMOrchestrator(self.repository, adapter).run_turn(
+            self.track.track_id,
+            "test message",
+        )
+        self.assertEqual(current_signal.model_dump(mode="json"), result["current_signal"])
+        self.assertIsNone(result["current_signal_audit_error"])
+
+    def test_invalid_optional_phase_v1_current_signal_becomes_non_fatal_audit_error(self) -> None:
+        class AdapterWithInvalidCurrentSignal(FakeLLMAdapter):
+            def run_phase_v1_stage0_signal_extraction(self, context: dict[str, Any]) -> dict[str, Any]:
+                self.stage0_contexts.append(context)
+                return {
+                    "entities": [
+                        {
+                            "id": "e1",
+                            "mention": "Lena",
+                            "entity_type": "person",
+                            "source_span": "",
+                            "resolution_status": "literal",
+                            "resolved_to": None,
+                        }
+                    ],
+                    "information_signals": [],
+                    "unresolved_references": [],
+                    "ambiguous_references": [],
+                }
+
+        adapter = AdapterWithInvalidCurrentSignal(
+            stage1_decision=self._stage1_decision(
+                decision_type="answer_directly",
+                draft_answer="Direct answer.",
+            )
+        )
+        result = DeterministicLLMOrchestrator(self.repository, adapter).run_turn(
+            self.track.track_id,
+            "test message",
+        )
+        self.assertEqual("Direct answer.", result["answer"])
+        self.assertIsNone(result["current_signal"])
+        self.assertIn("source_span", result["current_signal_audit_error"])
 
     def test_exclude_turn_id_reaches_context_builder_behavior(self) -> None:
         self.repository.persist_dialogue_turn(

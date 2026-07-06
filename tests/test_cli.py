@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mnemosyne_brain.app.cli import llm_env_is_configured, main
+from mnemosyne_brain.app.contracts.analysis import PhaseV1Stage0SignalExtraction
 from mnemosyne_brain.app.llm_provider import OpenAICompatibleLLMProvider, ProviderResponseError
 
 
@@ -357,6 +358,100 @@ class CliTestCase(unittest.TestCase):
             },
             set(payload),
         )
+
+    def test_valid_phase_v1_current_signal_is_attached_to_analysis_audit(self) -> None:
+        current_signal = PhaseV1Stage0SignalExtraction(
+            entities=[
+                {
+                    "id": "e1",
+                    "mention": "Lena",
+                    "entity_type": "person",
+                    "source_span": "ты знаешь лену",
+                    "resolution_status": "literal",
+                    "resolved_to": None,
+                }
+            ],
+            information_signals=[
+                {
+                    "id": "s1",
+                    "source_span": "ты знаешь лену",
+                    "signal_type": "person_mention",
+                    "about_entity_ids": ["e1"],
+                    "signal_scope": "current_message",
+                    "polarity": "questioned",
+                    "epistemic_status": "user_question",
+                    "extraction_note": "The user asks about a mentioned person.",
+                }
+            ],
+            unresolved_references=[],
+            ambiguous_references=[],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_current_signal.sqlite3")
+            with patch(
+                "mnemosyne_brain.app.memory.write.handle_candidate_write",
+                side_effect=AssertionError("Phase V1 current_signal must not call MemoryWriteService"),
+            ), patch(
+                "mnemosyne_brain.app.memory.conflicts.ConflictResolver.decide",
+                side_effect=AssertionError("Phase V1 current_signal must not call ConflictDecision"),
+            ):
+                with self._patched_llm_path({"answer": "Assistant answer.", "current_signal": current_signal}):
+                    exit_code, rendered = self._run_cli_with_env("User message.", self._llm_env(db_path))
+            payload = self._list_track_analysis_events(db_path)[0]["payload"]
+            memory_candidate_count = self._count_rows(db_path, "memory_candidates")
+            memory_item_count = self._count_rows(db_path, "memory_items")
+            memory_staging_count = self._count_rows(db_path, "memory_staging")
+        self.assertEqual(0, exit_code)
+        self.assertIn("Assistant: Assistant answer.", rendered)
+        self.assertEqual(current_signal.model_dump(mode="json"), payload["current_signal"])
+        self.assertNotIn("current_signal_error", payload)
+        self.assertEqual(0, memory_candidate_count)
+        self.assertEqual(0, memory_item_count)
+        self.assertEqual(0, memory_staging_count)
+
+    def test_invalid_phase_v1_current_signal_is_non_fatal_and_recorded_as_audit_error(self) -> None:
+        invalid_current_signal = {
+            "entities": [
+                {
+                    "id": "e1",
+                    "mention": "Lena",
+                    "entity_type": "person",
+                    "source_span": "",
+                    "resolution_status": "literal",
+                    "resolved_to": None,
+                }
+            ],
+            "information_signals": [],
+            "unresolved_references": [],
+            "ambiguous_references": [],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_invalid_current_signal.sqlite3")
+            with patch(
+                "mnemosyne_brain.app.memory.write.handle_candidate_write",
+                side_effect=AssertionError("Invalid current_signal must not call MemoryWriteService"),
+            ), patch(
+                "mnemosyne_brain.app.memory.conflicts.ConflictResolver.decide",
+                side_effect=AssertionError("Invalid current_signal must not call ConflictDecision"),
+            ):
+                with self._patched_llm_path({"answer": "Assistant answer.", "current_signal": invalid_current_signal}):
+                    exit_code, rendered = self._run_cli_with_env("User message.", self._llm_env(db_path))
+            turns = self._list_turns(db_path)
+            analysis_events = self._list_track_analysis_events(db_path)
+            payload = analysis_events[0]["payload"]
+            memory_candidate_count = self._count_rows(db_path, "memory_candidates")
+            memory_item_count = self._count_rows(db_path, "memory_items")
+            memory_staging_count = self._count_rows(db_path, "memory_staging")
+        self.assertEqual(0, exit_code)
+        self.assertIn("Assistant: Assistant answer.", rendered)
+        self.assertEqual(2, len(turns))
+        self.assertEqual(1, len(analysis_events))
+        self.assertNotIn("current_signal", payload)
+        self.assertIn("current_signal_error", payload)
+        self.assertIn("source_span", payload["current_signal_error"])
+        self.assertEqual(0, memory_candidate_count)
+        self.assertEqual(0, memory_item_count)
+        self.assertEqual(0, memory_staging_count)
 
     def test_answer_directly_analysis_uses_stage1_facts_and_candidates(self) -> None:
         stage1_facts = [{"fact": "stage1_fact"}]

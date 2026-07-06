@@ -8,8 +8,11 @@ import sqlite3
 import sys
 from collections.abc import Sequence
 
+from pydantic import ValidationError
+
 from .api.user_message import handle_user_message
 from .config import load_config, load_project_env
+from .contracts.analysis import PhaseV1Stage0SignalExtraction
 from .contracts.base import new_id, server_now
 from .contracts.memory import MemoryCandidate
 from .contracts.provenance import Provenance
@@ -251,7 +254,7 @@ def build_llm_analysis_payload(result: dict) -> dict:
     if stage2_decision is not None:
         extracted_facts.extend(stage2_decision.get("extracted_facts", []))
         memory_candidates.extend(stage2_decision.get("memory_candidates", []))
-    return {
+    payload = {
         "route": result["route"],
         "selected_memory_ids": list(result.get("selected_memory_ids", [])),
         "used_memory_ids": list(result.get("used_memory_ids", [])),
@@ -260,6 +263,29 @@ def build_llm_analysis_payload(result: dict) -> dict:
         "extracted_facts": extracted_facts,
         "memory_candidates": memory_candidates,
     }
+    payload.update(build_phase_v1_current_signal_audit(result))
+    return payload
+
+
+def build_phase_v1_current_signal_audit(result: dict) -> dict:
+    """Return audit-only Phase V1 Stage 0 signal data without affecting answer persistence."""
+
+    raw_current_signal = result.get("current_signal")
+    current_signal_error = result.get("current_signal_audit_error")
+    audit_payload: dict[str, object] = {}
+    if raw_current_signal is not None:
+        try:
+            signal = (
+                raw_current_signal
+                if isinstance(raw_current_signal, PhaseV1Stage0SignalExtraction)
+                else PhaseV1Stage0SignalExtraction.model_validate(raw_current_signal)
+            )
+            audit_payload["current_signal"] = signal.model_dump(mode="json")
+        except (ValidationError, TypeError, ValueError) as error:
+            current_signal_error = f"{error.__class__.__name__}: {error}"
+    if isinstance(current_signal_error, str) and current_signal_error.strip():
+        audit_payload["current_signal_error"] = current_signal_error.strip()
+    return audit_payload
 
 
 def main(argv: Sequence[str] | None = None) -> int:
