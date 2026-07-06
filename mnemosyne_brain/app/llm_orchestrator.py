@@ -10,6 +10,7 @@ from .contracts.analysis import PhaseV1Stage0SignalExtraction
 from .context_builder import ContextBuilder
 from .db.repository import SqliteRepository
 from .llm_provider import LLMAdapter
+from .stage0_current_signal_service import Stage0CurrentSignalService
 
 ROUTE_ANSWER_DIRECTLY = "answer_directly"
 ROUTE_USED_SELECTED_MEMORY = "used_selected_memory"
@@ -21,6 +22,7 @@ class DeterministicLLMOrchestrator:
     def __init__(self, repository: SqliteRepository, adapter: LLMAdapter) -> None:
         self._context_builder = ContextBuilder(repository)
         self._adapter = adapter
+        self._stage0_current_signal_service = Stage0CurrentSignalService()
 
     def run_turn(
         self,
@@ -79,11 +81,13 @@ class DeterministicLLMOrchestrator:
     def _capture_phase_v1_current_signal(self, stage1_context: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
         """Collect optional Phase V1 Stage 0 signal data without affecting the answer path."""
 
-        extractor = getattr(self._adapter, "run_phase_v1_stage0_signal_extraction", None)
-        if not callable(extractor):
-            return None, None
         try:
-            raw_signal = extractor(dict(stage1_context))
+            raw_signal = self._stage0_current_signal_service.extract_for_runtime(
+                stage1_context,
+                adapter=self._adapter,
+            )
+            if raw_signal is None:
+                return None, None
             signal = (
                 raw_signal
                 if isinstance(raw_signal, PhaseV1Stage0SignalExtraction)

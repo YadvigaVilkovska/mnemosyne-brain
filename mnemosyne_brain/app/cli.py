@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sqlite3
 import sys
@@ -28,6 +29,7 @@ from .llm_provider import (
     ProviderConfigError,
     ProviderResponseError,
 )
+from .stage0_current_signal_service import Stage0CurrentSignalService
 
 REQUIRED_LLM_ENV_VARS = (LLM_BASE_URL_ENV, LLM_API_KEY_ENV, LLM_MODEL_ENV)
 
@@ -37,6 +39,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(prog="python3 -m mnemosyne_brain.app.cli")
     parser.add_argument("--thread-id")
+    parser.add_argument("message")
+    return parser
+
+
+def build_debug_signal_parser() -> argparse.ArgumentParser:
+    """Create the CLI parser for the audit-only debug signal command."""
+
+    parser = argparse.ArgumentParser(prog="python3 -m mnemosyne_brain.app.cli debug-signal")
     parser.add_argument("message")
     return parser
 
@@ -288,8 +298,21 @@ def build_phase_v1_current_signal_audit(result: dict) -> dict:
     return audit_payload
 
 
+def run_debug_signal(message: str) -> dict:
+    """Run the shared Stage 0 current-signal service without touching persistence."""
+
+    signal = Stage0CurrentSignalService().extract_debug(message)
+    return signal.model_dump(mode="json")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and print a concise user-facing result."""
+
+    argv = list(argv or sys.argv[1:])
+    if argv and argv[0] == "debug-signal":
+        args = build_debug_signal_parser().parse_args(argv[1:])
+        print(json.dumps(run_debug_signal(args.message), ensure_ascii=False, indent=2))
+        return 0
 
     args = build_parser().parse_args(argv)
     try:

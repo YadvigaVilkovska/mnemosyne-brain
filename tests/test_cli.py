@@ -409,6 +409,68 @@ class CliTestCase(unittest.TestCase):
         self.assertEqual(0, memory_item_count)
         self.assertEqual(0, memory_staging_count)
 
+    def test_debug_signal_command_prints_valid_json_without_touching_db(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_debug_signal.sqlite3")
+            with patch(
+                "mnemosyne_brain.app.memory.write.handle_candidate_write",
+                side_effect=AssertionError("debug-signal must not call MemoryWriteService"),
+            ), patch(
+                "mnemosyne_brain.app.memory.conflicts.ConflictResolver.decide",
+                side_effect=AssertionError("debug-signal must not call ConflictDecision"),
+            ):
+                exit_code, rendered = self._run_cli_args_with_env(
+                    ["debug-signal", "Алёна работает с нами"],
+                    {"MNEMOSYNE_DB_PATH": db_path},
+                )
+        payload = json.loads(rendered)
+        PhaseV1Stage0SignalExtraction.model_validate(payload)
+        self.assertEqual(0, exit_code)
+        self.assertFalse(os.path.exists(db_path))
+
+    def test_debug_signal_person_message_contains_entity_and_signal(self) -> None:
+        exit_code, rendered = self._run_cli_args_with_env(
+            ["debug-signal", "Алёна работает с нами"],
+            {},
+        )
+        payload = json.loads(rendered)
+        self.assertEqual(0, exit_code)
+        self.assertEqual("Алёна", payload["entities"][0]["mention"])
+        self.assertEqual("person", payload["entities"][0]["entity_type"])
+        self.assertEqual(
+            "possible_connection_between_entities",
+            payload["information_signals"][0]["signal_type"],
+        )
+        self.assertEqual(
+            "about_other_person",
+            payload["information_signals"][0]["signal_scope"],
+        )
+        self.assertEqual(
+            "user_claim",
+            payload["information_signals"][0]["epistemic_status"],
+        )
+
+    def test_debug_signal_reaction_message_contains_current_interaction_signal(self) -> None:
+        exit_code, rendered = self._run_cli_args_with_env(
+            ["debug-signal", "Какая у тебя большая бюрократия?"],
+            {},
+        )
+        payload = json.loads(rendered)
+        self.assertEqual(0, exit_code)
+        self.assertEqual([], payload["entities"])
+        self.assertEqual(
+            "dissatisfaction_with_complexity",
+            payload["information_signals"][0]["signal_type"],
+        )
+        self.assertEqual(
+            "about_current_interaction",
+            payload["information_signals"][0]["signal_scope"],
+        )
+        self.assertEqual(
+            "user_reaction",
+            payload["information_signals"][0]["epistemic_status"],
+        )
+
     def test_invalid_phase_v1_current_signal_is_non_fatal_and_recorded_as_audit_error(self) -> None:
         invalid_current_signal = {
             "entities": [
