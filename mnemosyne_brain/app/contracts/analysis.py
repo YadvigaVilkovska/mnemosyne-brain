@@ -112,8 +112,8 @@ class Stage0EntityRole(StrEnum):
     UNKNOWN = "unknown"
 
 
-class Stage0NewInformationStatus(StrEnum):
-    """Allowed durable-information detection outcomes."""
+class Stage0CurrentSignalStatus(StrEnum):
+    """Allowed Stage 0 interpretation signal outcomes."""
 
     NONE = "none"
     CLEAR = "clear"
@@ -121,8 +121,8 @@ class Stage0NewInformationStatus(StrEnum):
     CORRECTION = "correction"
 
 
-class Stage0NewInformationKind(StrEnum):
-    """Allowed durable-information kinds in the Stage 0 frame."""
+class Stage0CurrentSignalKind(StrEnum):
+    """Allowed Stage 0 interpretation signal kinds in the NLU frame."""
 
     NONE = "none"
     PREFERENCE = "preference"
@@ -152,11 +152,11 @@ class Stage0Entity(StrictContractModel):
         return stripped
 
 
-class Stage0NewInformation(StrictContractModel):
-    """Stage 0 decision about whether the message adds durable information."""
+class Stage0CurrentSignal(StrictContractModel):
+    """Lightweight interpretation signal derived from the current user message."""
 
-    status: Stage0NewInformationStatus
-    kind: Stage0NewInformationKind
+    status: Stage0CurrentSignalStatus
+    kind: Stage0CurrentSignalKind
     summary: str
     needs_confirmation: bool
 
@@ -193,7 +193,7 @@ class Stage0NLUFrame(StrictContractModel):
     normalized_intent: str
     dialogue_acts: list[Stage0DialogueAct]
     entities: list[Stage0Entity]
-    new_information: Stage0NewInformation
+    current_signal: Stage0CurrentSignal
     clarification: Stage0Clarification
     memory_selection_hint: Stage0MemorySelectionHint
 

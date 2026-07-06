@@ -157,7 +157,7 @@ class LLMProviderTestCase(unittest.TestCase):
                             "role": "subject",
                         }
                     ],
-                    "new_information": {
+                    "current_signal": {
                         "status": "possible",
                         "kind": "alias_equivalence",
                         "summary": "Possible alias equivalence proposal.",
@@ -227,7 +227,7 @@ class LLMProviderTestCase(unittest.TestCase):
                     "normalized_intent": "Normalized intent.",
                     "dialogue_acts": ["question"],
                     "entities": [],
-                    "new_information": {
+                    "current_signal": {
                         "status": "none",
                         "kind": "none",
                         "summary": "",
@@ -243,12 +243,16 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn("Normalize current_user_message into conversational intent", prompt)
         self.assertIn("Classify dialogue act", prompt)
         self.assertIn("Extract structured entities/references", prompt)
-        self.assertIn("Detect whether current_user_message introduces new durable information", prompt)
+        self.assertIn("current_signal", prompt)
+        self.assertIn("current signal is a lightweight interpretation signal", prompt)
+        self.assertIn("not durable truth", prompt)
+        self.assertIn("not memory by itself", prompt)
         self.assertIn("ambiguity requires one clarification question", prompt)
         self.assertIn("recent_messages may help interpret current_user_message", prompt)
         self.assertIn("previous_track_analysis_saved may help interpret current_user_message", prompt)
-        self.assertIn("Neither recent_messages nor previous_track_analysis_saved are sources of new information", prompt)
-        self.assertIn("New durable information must come from current_user_message after normalization", prompt)
+        self.assertIn("Neither recent_messages nor previous_track_analysis_saved are sources of current signal", prompt)
+        self.assertNotIn("new_" + "information", prompt)
+        self.assertNotIn("new durable information", prompt)
         self.assertIn("Do not use keyword matching", prompt)
         self.assertIn("Do not use regex", prompt)
         self.assertIn("Do not use phrase-trigger lists", prompt)
@@ -264,9 +268,11 @@ class LLMProviderTestCase(unittest.TestCase):
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
         self.assertIn("If stage0_nlu_frame is present, use normalized_intent as the primary interpretation", prompt)
         self.assertIn("Answer normalized intent, not just surface wording", prompt)
-        self.assertIn("Use dialogue_acts and new_information from stage0_nlu_frame", prompt)
+        self.assertIn("Use dialogue_acts and current_signal from stage0_nlu_frame", prompt)
         self.assertIn("If clarification.needed=true in stage0_nlu_frame, ask that clarification question naturally", prompt)
-        self.assertIn("Do not treat Stage 0 as final truth; it is an interpretation frame", prompt)
+        self.assertIn("Do not treat Stage 0 current_signal as final truth", prompt)
+        self.assertIn("stage0_nlu_frame.current_signal", prompt)
+        self.assertNotIn("stage0_nlu_frame." + "new_" + "information", prompt)
 
     def test_stage1_prompt_keeps_candidate_extraction_on_answer_directly_route(self) -> None:
         provider, transport = self._provider(self._stage1_response())
@@ -540,7 +546,7 @@ class LLMProviderTestCase(unittest.TestCase):
                     "normalized_intent": "Intent.",
                     "dialogue_acts": ["question"],
                     "entities": [],
-                    "new_information": {
+                    "current_signal": {
                         "status": "none",
                         "kind": "none",
                         "summary": "",
@@ -563,7 +569,7 @@ class LLMProviderTestCase(unittest.TestCase):
                     "normalized_intent": "Intent.",
                     "dialogue_acts": ["question"],
                     "entities": [],
-                    "new_information": {
+                    "current_signal": {
                         "status": "none",
                         "kind": "none",
                         "summary": "",
@@ -586,7 +592,7 @@ class LLMProviderTestCase(unittest.TestCase):
                     "normalized_intent": "Intent.",
                     "dialogue_acts": ["question"],
                     "entities": [],
-                    "new_information": {
+                    "current_signal": {
                         "status": "none",
                         "kind": "none",
                         "summary": "",

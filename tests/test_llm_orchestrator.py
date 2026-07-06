@@ -29,7 +29,7 @@ class FakeLLMAdapter:
                 "normalized_intent": "The user asks for a direct answer.",
                 "dialogue_acts": ["question"],
                 "entities": [],
-                "new_information": {
+                "current_signal": {
                     "status": "none",
                     "kind": "none",
                     "summary": "",
@@ -231,7 +231,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
                         "role": "subject",
                     }
                 ],
-                "new_information": {
+                "current_signal": {
                     "status": "possible",
                     "kind": "alias_equivalence",
                     "summary": "Possible alias equivalence.",
@@ -321,7 +321,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
                     "normalized_intent": "Potential alias proposal.",
                     "dialogue_acts": ["alias_or_equivalence_proposal"],
                     "entities": [],
-                    "new_information": {
+                    "current_signal": {
                         "status": "possible",
                         "kind": "alias_equivalence",
                         "summary": "Possible alias.",

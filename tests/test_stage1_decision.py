@@ -135,7 +135,7 @@ class Stage0NLUFrameTestCase(unittest.TestCase):
                     "role": "subject",
                 }
             ],
-            "new_information": {
+            "current_signal": {
                 "status": "possible",
                 "kind": "alias_equivalence",
                 "summary": "The user may be proposing an alias equivalence.",
@@ -155,7 +155,7 @@ class Stage0NLUFrameTestCase(unittest.TestCase):
     def test_valid_stage0_nlu_frame_passes(self) -> None:
         frame = Stage0NLUFrame.model_validate(self._valid_frame_payload())
         self.assertEqual("stage0_nlu_frame.v1", frame.schema_version)
-        self.assertEqual("possible", frame.new_information.status)
+        self.assertEqual("possible", frame.current_signal.status)
 
     def test_extra_top_level_field_fails(self) -> None:
         payload = self._valid_frame_payload() | {"unexpected": True}
@@ -180,15 +180,21 @@ class Stage0NLUFrameTestCase(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Stage0NLUFrame.model_validate(payload)
 
-    def test_invalid_new_information_status_fails(self) -> None:
+    def test_invalid_current_signal_status_fails(self) -> None:
         payload = self._valid_frame_payload()
-        payload["new_information"]["status"] = "invalid"
+        payload["current_signal"]["status"] = "invalid"
         with self.assertRaises(ValidationError):
             Stage0NLUFrame.model_validate(payload)
 
-    def test_invalid_new_information_kind_fails(self) -> None:
+    def test_invalid_current_signal_kind_fails(self) -> None:
         payload = self._valid_frame_payload()
-        payload["new_information"]["kind"] = "invalid"
+        payload["current_signal"]["kind"] = "invalid"
+        with self.assertRaises(ValidationError):
+            Stage0NLUFrame.model_validate(payload)
+
+    def test_old_new_information_field_fails(self) -> None:
+        payload = self._valid_frame_payload()
+        payload["new_information"] = payload.pop("current_signal")
         with self.assertRaises(ValidationError):
             Stage0NLUFrame.model_validate(payload)
 
