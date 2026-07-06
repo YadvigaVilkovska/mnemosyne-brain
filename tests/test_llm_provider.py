@@ -258,6 +258,18 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn("Neither recent_messages nor previous_track_analysis_saved are sources of current signal", prompt)
         self.assertNotIn("new_" + "information", prompt)
         self.assertNotIn("new durable information", prompt)
+        self.assertIn("dialogue_acts must contain only values from the Stage0DialogueAct enum", prompt)
+        self.assertIn("Do not invent dialogue act names", prompt)
+        self.assertIn('If you are unsure which allowed act fits, choose "other"', prompt)
+        self.assertIn("If several allowed acts fit, include several allowed enum values", prompt)
+        self.assertIn("Never output values outside the listed enum", prompt)
+        self.assertNotIn("statement", prompt)
+        self.assertNotIn("Алена", prompt)
+        self.assertNotIn("Алёна", prompt)
+        self.assertNotIn("Екатерина", prompt)
+        self.assertNotIn("любовница", prompt)
+        self.assertNotIn("проститут", prompt)
+        self.assertNotIn("рабочее имя", prompt)
         self.assertIn("Do not use keyword matching", prompt)
         self.assertIn("Do not use regex", prompt)
         self.assertIn("Do not use phrase-trigger lists", prompt)
@@ -278,6 +290,22 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn("Do not treat Stage 0 current_signal as final truth", prompt)
         self.assertIn("stage0_nlu_frame.current_signal", prompt)
         self.assertNotIn("stage0_nlu_frame." + "new_" + "information", prompt)
+
+    def test_stage1_prompt_requires_grounded_draft_answer(self) -> None:
+        provider, transport = self._provider(self._stage1_response())
+        provider.decide_stage1({"stage": "stage1"})
+        prompt = transport.calls[0]["payload"]["messages"][0]["content"]
+        self.assertIn("draft_answer must be grounded in current_user_message", prompt)
+        self.assertIn(
+            "If current_user_message provides new or clarifying information relevant to the current exchange, acknowledge that information in the answer",
+            prompt,
+        )
+        self.assertIn("Do not repeat a previous fallback question as if current_user_message contained no information", prompt)
+        self.assertIn(
+            "If more context is needed, ask one follow-up only after acknowledging the information already provided",
+            prompt,
+        )
+        self.assertIn("Candidate extraction must not replace a useful user-visible answer", prompt)
 
     def test_stage1_prompt_keeps_candidate_extraction_on_answer_directly_route(self) -> None:
         provider, transport = self._provider(self._stage1_response())

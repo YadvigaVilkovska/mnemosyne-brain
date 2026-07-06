@@ -43,6 +43,11 @@ STAGE0_NLU_SYSTEM_PROMPT = (
     '{"schema_version":"stage0_nlu_frame.v1","normalized_intent":"","dialogue_acts":["question"],"entities":[{"surface":"","kind":"person|alias|relationship|preference|topic|other","role":"subject|object|reference|unknown"}],"current_signal":{"status":"none|clear|possible|correction","kind":"none|preference|person|alias_equivalence|relationship|biographical_context|memory_instruction|other","summary":"","needs_confirmation":false},"clarification":{"needed":false,"question":""},"memory_selection_hint":{"needed":false,"reason":"","query_terms":[]}}. '
     "Intent normalization answers what the user wants to achieve, not just what the surface wording says. "
     "Dialogue acts describe the communicative function of the message. "
+    "dialogue_acts must contain only values from the Stage0DialogueAct enum. "
+    "Do not invent dialogue act names. "
+    'If you are unsure which allowed act fits, choose "other". '
+    "If several allowed acts fit, include several allowed enum values. "
+    "Never output values outside the listed enum. "
     "Entities are structured pieces of information inside the current user message. "
     "recent_messages may help interpret current_user_message. "
     "previous_track_analysis_saved may help interpret current_user_message. "
@@ -119,6 +124,11 @@ STAGE1_SYSTEM_PROMPT = (
     "Answer normalized intent, not just surface wording. "
     "Use dialogue_acts and current_signal from stage0_nlu_frame to decide whether to answer, clarify, or emit candidates. "
     "If clarification.needed=true in stage0_nlu_frame, ask that clarification question naturally in draft_answer. "
+    "draft_answer must be grounded in current_user_message. "
+    "If current_user_message provides new or clarifying information relevant to the current exchange, acknowledge that information in the answer. "
+    "Do not repeat a previous fallback question as if current_user_message contained no information. "
+    "If more context is needed, ask one follow-up only after acknowledging the information already provided. "
+    "Candidate extraction must not replace a useful user-visible answer. "
     "Emit memory_candidates only from memory-relevant information in current_user_message, using stage0_nlu_frame.current_signal as a hint. "
     "Do not emit candidates from recent_messages or previous_track_analysis_saved alone. "
     "Do not treat Stage 0 current_signal as final truth. "
