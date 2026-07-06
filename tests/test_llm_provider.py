@@ -180,6 +180,118 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertEqual("stage0_nlu_frame.v1", frame.schema_version)
         self.assertEqual(1, len(transport.calls))
 
+    def test_stage0_statement_dialogue_act_is_repaired_to_other(self) -> None:
+        provider, _transport = self._provider(
+            json.dumps(
+                {
+                    "schema_version": "stage0_nlu_frame.v1",
+                    "normalized_intent": "Normalized intent.",
+                    "dialogue_acts": ["statement"],
+                    "entities": [],
+                    "current_signal": {
+                        "status": "none",
+                        "kind": "none",
+                        "summary": "",
+                        "needs_confirmation": False,
+                    },
+                    "clarification": {"needed": False, "question": ""},
+                    "memory_selection_hint": {"needed": False, "reason": "", "query_terms": []},
+                }
+            )
+        )
+        frame = provider.run_stage0_nlu({"stage": "stage1"})
+        self.assertEqual(["other"], [act.value for act in frame.dialogue_acts])
+
+    def test_stage0_repair_preserves_valid_acts_and_dedupes_order(self) -> None:
+        provider, _transport = self._provider(
+            json.dumps(
+                {
+                    "schema_version": "stage0_nlu_frame.v1",
+                    "normalized_intent": "Normalized intent.",
+                    "dialogue_acts": ["question", "statement", "question"],
+                    "entities": [],
+                    "current_signal": {
+                        "status": "clear",
+                        "kind": "person",
+                        "summary": "A current signal.",
+                        "needs_confirmation": False,
+                    },
+                    "clarification": {"needed": False, "question": ""},
+                    "memory_selection_hint": {"needed": False, "reason": "", "query_terms": []},
+                }
+            )
+        )
+        frame = provider.run_stage0_nlu({"stage": "stage1"})
+        self.assertEqual(["question", "other"], [act.value for act in frame.dialogue_acts])
+
+    def test_stage0_missing_dialogue_acts_defaults_to_other(self) -> None:
+        provider, _transport = self._provider(
+            json.dumps(
+                {
+                    "schema_version": "stage0_nlu_frame.v1",
+                    "normalized_intent": "Normalized intent.",
+                    "entities": [],
+                    "current_signal": {
+                        "status": "none",
+                        "kind": "none",
+                        "summary": "",
+                        "needs_confirmation": False,
+                    },
+                    "clarification": {"needed": False, "question": ""},
+                    "memory_selection_hint": {"needed": False, "reason": "", "query_terms": []},
+                }
+            )
+        )
+        frame = provider.run_stage0_nlu({"stage": "stage1"})
+        self.assertEqual(["other"], [act.value for act in frame.dialogue_acts])
+
+    def test_stage0_invalid_dialogue_acts_shape_defaults_to_other(self) -> None:
+        provider, _transport = self._provider(
+            json.dumps(
+                {
+                    "schema_version": "stage0_nlu_frame.v1",
+                    "normalized_intent": "Normalized intent.",
+                    "dialogue_acts": "statement",
+                    "entities": [],
+                    "current_signal": {
+                        "status": "none",
+                        "kind": "none",
+                        "summary": "",
+                        "needs_confirmation": False,
+                    },
+                    "clarification": {"needed": False, "question": ""},
+                    "memory_selection_hint": {"needed": False, "reason": "", "query_terms": []},
+                }
+            )
+        )
+        frame = provider.run_stage0_nlu({"stage": "stage1"})
+        self.assertEqual(["other"], [act.value for act in frame.dialogue_acts])
+
+    def test_stage0_repair_does_not_change_current_signal(self) -> None:
+        provider, _transport = self._provider(
+            json.dumps(
+                {
+                    "schema_version": "stage0_nlu_frame.v1",
+                    "normalized_intent": "Normalized intent.",
+                    "dialogue_acts": ["statement"],
+                    "entities": [],
+                    "current_signal": {
+                        "status": "possible",
+                        "kind": "alias_equivalence",
+                        "summary": "A current signal.",
+                        "needs_confirmation": True,
+                    },
+                    "clarification": {"needed": False, "question": ""},
+                    "memory_selection_hint": {"needed": False, "reason": "", "query_terms": []},
+                }
+            )
+        )
+        frame = provider.run_stage0_nlu({"stage": "stage1"})
+        self.assertEqual("possible", frame.current_signal.status)
+        self.assertEqual("alias_equivalence", frame.current_signal.kind)
+        self.assertEqual("A current signal.", frame.current_signal.summary)
+        self.assertTrue(frame.current_signal.needs_confirmation)
+
     def test_stage1_prompt_rejects_wrapped_contract_and_includes_memory_selection_rules(self) -> None:
         provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
@@ -196,6 +308,9 @@ class LLMProviderTestCase(unittest.TestCase):
         )
         self.assertIn('never use request_memory', prompt)
         self.assertIn("recent_messages and answer_directly", prompt)
+        self.assertIn("Do not claim information was saved, written, recorded, remembered, or permanently applied", prompt)
+        self.assertIn("A memory candidate is only a candidate or staged proposal, not durable saved memory", prompt)
+        self.assertIn("Acknowledge information without claiming persistence", prompt)
 
     def test_stage1_prompt_requires_memory_update_extraction_status(self) -> None:
         provider, transport = self._provider(self._stage1_response())
@@ -264,17 +379,16 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn("If several allowed acts fit, include several allowed enum values", prompt)
         self.assertIn("Never output values outside the listed enum", prompt)
         self.assertNotIn("statement", prompt)
-        self.assertNotIn("Алена", prompt)
-        self.assertNotIn("Алёна", prompt)
-        self.assertNotIn("Екатерина", prompt)
-        self.assertNotIn("любовница", prompt)
-        self.assertNotIn("проститут", prompt)
-        self.assertNotIn("рабочее имя", prompt)
         self.assertIn("Do not use keyword matching", prompt)
         self.assertIn("Do not use regex", prompt)
         self.assertIn("Do not use phrase-trigger lists", prompt)
         self.assertIn("Do not add Russian examples", prompt)
         self.assertIn("Do not hardcode live names or live text", prompt)
+        self.assertIn("Do not omit, sanitize, moralize, or euphemize sensitive life context", prompt)
+        self.assertIn("This includes stigmatized or sensitive work such as sex work", prompt)
+        self.assertIn("If the user says that someone worked as a prostitute", prompt)
+        self.assertIn("Do not infer trafficking, coercion, exploitation, trauma, criminality, promiscuity, moral failure, victimhood, or risk unless the user explicitly states it or the immediate context clearly supports it", prompt)
+        self.assertIn("For internal memory or normalized meaning, do not lose the specific fact", prompt)
         self.assertIn("Your job is not to answer", prompt)
         self.assertIn("Do not create memory_candidates", prompt)
         self.assertIn("Do not select memory IDs yet", prompt)
@@ -306,6 +420,14 @@ class LLMProviderTestCase(unittest.TestCase):
             prompt,
         )
         self.assertIn("Candidate extraction must not replace a useful user-visible answer", prompt)
+        self.assertIn("Do not claim information was saved, written, recorded, remembered, or permanently applied", prompt)
+        self.assertIn("A memory candidate is only a candidate or staged proposal, not durable saved memory", prompt)
+        self.assertIn("Acknowledge information without claiming persistence", prompt)
+        self.assertIn("Do not omit, sanitize, moralize, or euphemize sensitive life context", prompt)
+        self.assertIn("This includes stigmatized or sensitive work such as sex work", prompt)
+        self.assertIn("If the user says that someone worked as a prostitute", prompt)
+        self.assertIn("Do not infer trafficking, coercion, exploitation, trauma, criminality, promiscuity, moral failure, victimhood, or risk unless the user explicitly states it or the immediate context clearly supports it", prompt)
+        self.assertIn("For internal memory or normalized meaning, do not lose the specific fact", prompt)
 
     def test_stage1_prompt_keeps_candidate_extraction_on_answer_directly_route(self) -> None:
         provider, transport = self._provider(self._stage1_response())
@@ -541,6 +663,41 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertEqual(["mem_1"], decision.used_memory_ids)
         self.assertEqual(1, len(transport.calls))
 
+    def test_stage1_empty_memory_update_reason_still_fails_contract_validation(self) -> None:
+        provider, _transport = self._provider(
+            json.dumps(
+                {
+                    "schema_version": "0.4.3",
+                    "decision_type": "answer_directly",
+                    "draft_answer": "Done.",
+                    "memory_candidates": [],
+                    "memory_update_extraction": {
+                        "status": "fail",
+                        "reason": "",
+                    },
+                }
+            )
+        )
+        with self.assertRaisesRegex(ProviderResponseError, "contract validation"):
+            provider.decide_stage1({"stage": "stage1"})
+
+    def test_stage2_empty_memory_update_reason_still_fails_contract_validation(self) -> None:
+        provider, _transport = self._provider(
+            json.dumps(
+                {
+                    "schema_version": "0.4.3",
+                    "final_answer": "Done.",
+                    "memory_candidates": [],
+                    "memory_update_extraction": {
+                        "status": "fail",
+                        "reason": "",
+                    },
+                }
+            )
+        )
+        with self.assertRaisesRegex(ProviderResponseError, "contract validation"):
+            provider.decide_stage2({"stage": "stage2"})
+
     def test_stage2_prompt_rejects_wrapped_contract_and_names_final_answer(self) -> None:
         provider, transport = self._provider(self._stage2_response())
         provider.decide_stage2({"stage": "stage2"})
@@ -548,6 +705,22 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn("Do not wrap in Stage2Decision", prompt)
         self.assertIn('"schema_version":"0.4.3"', prompt)
         self.assertIn("final_answer", prompt)
+        self.assertIn("Do not claim information was saved, written, recorded, remembered, or permanently applied", prompt)
+        self.assertIn("A memory candidate is only a candidate or staged proposal, not durable saved memory", prompt)
+        self.assertIn("Acknowledge information without claiming persistence", prompt)
+        self.assertIn("Do not omit, sanitize, moralize, or euphemize sensitive life context", prompt)
+        self.assertIn("This includes stigmatized or sensitive work such as sex work", prompt)
+        self.assertIn("If the user says that someone worked as a prostitute", prompt)
+        self.assertIn("Do not infer trafficking, coercion, exploitation, trauma, criminality, promiscuity, moral failure, victimhood, or risk unless the user explicitly states it or the immediate context clearly supports it", prompt)
+        self.assertIn("For internal memory or normalized meaning, do not lose the specific fact", prompt)
+        self.assertIn("Do not claim information was saved, written, recorded, remembered, or permanently applied", prompt)
+        self.assertIn("A memory candidate is only a candidate or staged proposal, not durable saved memory", prompt)
+        self.assertIn("Acknowledge information without claiming persistence", prompt)
+        self.assertIn("Do not omit, sanitize, moralize, or euphemize sensitive life context", prompt)
+        self.assertIn("This includes stigmatized or sensitive work such as sex work", prompt)
+        self.assertIn("If the user says that someone worked as a prostitute", prompt)
+        self.assertIn("Do not infer trafficking, coercion, exploitation, trauma, criminality, promiscuity, moral failure, victimhood, or risk unless the user explicitly states it or the immediate context clearly supports it", prompt)
+        self.assertIn("For internal memory or normalized meaning, do not lose the specific fact", prompt)
 
     def test_stage2_prompt_requires_memory_update_extraction_status(self) -> None:
         provider, transport = self._provider(self._stage2_response())

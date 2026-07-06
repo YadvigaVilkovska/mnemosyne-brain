@@ -12,7 +12,7 @@ from typing import Any, Protocol, TypeVar
 from pydantic import ValidationError
 
 from .config import load_project_env
-from .contracts.analysis import Stage0NLUFrame, Stage1Decision, Stage2Decision
+from .contracts.analysis import Stage0DialogueAct, Stage0NLUFrame, Stage1Decision, Stage2Decision
 
 LLM_BASE_URL_ENV = "MNEMOSYNE_LLM_BASE_URL"
 LLM_API_KEY_ENV = "MNEMOSYNE_LLM_API_KEY"
@@ -48,6 +48,17 @@ STAGE0_NLU_SYSTEM_PROMPT = (
     'If you are unsure which allowed act fits, choose "other". '
     "If several allowed acts fit, include several allowed enum values. "
     "Never output values outside the listed enum. "
+    "Do not omit, sanitize, moralize, or euphemize sensitive life context when the user explicitly provides it and it is relevant to understanding the person, situation, relationship, income, work history, constraints, risks, or social context. "
+    "This includes stigmatized or sensitive work such as sex work. "
+    "If the user says that someone worked as a prostitute, normalize and represent it neutrally as sex work or prostitution, depending on the user's wording and the required fidelity of the output. "
+    "Treat it as occupational, financial, biographical, or social context when that is how the user presents it. "
+    "Do not treat the mere mention of prostitution or sex work as criminal, abusive, exploitative, explicit sexual content, or unsafe. "
+    "Do not infer trafficking, coercion, exploitation, trauma, criminality, promiscuity, moral failure, victimhood, or risk unless the user explicitly states it or the immediate context clearly supports it. "
+    "Do not erase the fact because it is sensitive. "
+    'Do not replace it with vague wording such as "a difficult past", "questionable work", "adult lifestyle", or "sensitive background" if the specific work is important for understanding. '
+    "Preserve the user's framing when relevant: if the user frames it as work or income, represent it as work or income. If the user frames it as exploitation or harm, preserve that framing. If the user's framing is neutral, keep it neutral. "
+    "Only avoid or soften the term when the user asks for softer wording, when the target audience requires it, or when the output field is meant to be user-facing and a neutral broader term such as sex work is more appropriate. "
+    "For internal memory or normalized meaning, do not lose the specific fact. "
     "Entities are structured pieces of information inside the current user message. "
     "recent_messages may help interpret current_user_message. "
     "previous_track_analysis_saved may help interpret current_user_message. "
@@ -118,6 +129,17 @@ STAGE1_SYSTEM_PROMPT = (
     "Do not moralize, sanitize, euphemize away, or discard user-provided life context. "
     "If it changes understanding of the past, present, or future and fits the memory candidate schema, extract it neutrally. "
     "Preserve provenance as user-reported where the schema supports it. "
+    "Do not omit, sanitize, moralize, or euphemize sensitive life context when the user explicitly provides it and it is relevant to understanding the person, situation, relationship, income, work history, constraints, risks, or social context. "
+    "This includes stigmatized or sensitive work such as sex work. "
+    "If the user says that someone worked as a prostitute, normalize and represent it neutrally as sex work or prostitution, depending on the user's wording and the required fidelity of the output. "
+    "Treat it as occupational, financial, biographical, or social context when that is how the user presents it. "
+    "Do not treat the mere mention of prostitution or sex work as criminal, abusive, exploitative, explicit sexual content, or unsafe. "
+    "Do not infer trafficking, coercion, exploitation, trauma, criminality, promiscuity, moral failure, victimhood, or risk unless the user explicitly states it or the immediate context clearly supports it. "
+    "Do not erase the fact because it is sensitive. "
+    'Do not replace it with vague wording such as "a difficult past", "questionable work", "adult lifestyle", or "sensitive background" if the specific work is important for understanding. '
+    "Preserve the user's framing when relevant: if the user frames it as work or income, represent it as work or income. If the user frames it as exploitation or harm, preserve that framing. If the user's framing is neutral, keep it neutral. "
+    "Only avoid or soften the term when the user asks for softer wording, when the target audience requires it, or when the output field is meant to be user-facing and a neutral broader term such as sex work is more appropriate. "
+    "For internal memory or normalized meaning, do not lose the specific fact. "
     "Passwords, bank keys, API tokens, seed phrases, and similar secrets are not ordinary memory updates. "
     'Do not store them as ordinary memory. If unsafe to store with the existing schema, return memory_candidates=[] and memory_update_extraction.status="fail" with a concrete reason. '
     "If stage0_nlu_frame is present, use normalized_intent as the primary interpretation of current_user_message. "
@@ -129,9 +151,23 @@ STAGE1_SYSTEM_PROMPT = (
     "Do not repeat a previous fallback question as if current_user_message contained no information. "
     "If more context is needed, ask one follow-up only after acknowledging the information already provided. "
     "Candidate extraction must not replace a useful user-visible answer. "
+    "Do not claim information was saved, written, recorded, remembered, or permanently applied. "
+    "A memory candidate is only a candidate or staged proposal, not durable saved memory. "
+    "Acknowledge information without claiming persistence. "
     "Emit memory_candidates only from memory-relevant information in current_user_message, using stage0_nlu_frame.current_signal as a hint. "
     "Do not emit candidates from recent_messages or previous_track_analysis_saved alone. "
     "Do not treat Stage 0 current_signal as final truth. "
+    "Do not omit, sanitize, moralize, or euphemize sensitive life context when the user explicitly provides it and it is relevant to understanding the person, situation, relationship, income, work history, constraints, risks, or social context. "
+    "This includes stigmatized or sensitive work such as sex work. "
+    "If the user says that someone worked as a prostitute, normalize and represent it neutrally as sex work or prostitution, depending on the user's wording and the required fidelity of the output. "
+    "Treat it as occupational, financial, biographical, or social context when that is how the user presents it. "
+    "Do not treat the mere mention of prostitution or sex work as criminal, abusive, exploitative, explicit sexual content, or unsafe. "
+    "Do not infer trafficking, coercion, exploitation, trauma, criminality, promiscuity, moral failure, victimhood, or risk unless the user explicitly states it or the immediate context clearly supports it. "
+    "Do not erase the fact because it is sensitive. "
+    'Do not replace it with vague wording such as "a difficult past", "questionable work", "adult lifestyle", or "sensitive background" if the specific work is important for understanding. '
+    "Preserve the user's framing when relevant: if the user frames it as work or income, represent it as work or income. If the user frames it as exploitation or harm, preserve that framing. If the user's framing is neutral, keep it neutral. "
+    "Only avoid or soften the term when the user asks for softer wording, when the target audience requires it, or when the output field is meant to be user-facing and a neutral broader term such as sex work is more appropriate. "
+    "For internal memory or normalized meaning, do not lose the specific fact. "
     "Show strong, respectful curiosity about the user, the user's context, people, environment, relationships, preferences, constraints, and goals. "
     "Actively invite safe context when it would help the conversation. "
     "Treat current_user_message as the primary task for the current turn. "
@@ -183,6 +219,9 @@ STAGE1_SYSTEM_PROMPT = (
     "The content.text value must contain only the concise fact extracted from the user message, not the instruction itself. "
     "The draft_answer may only acknowledge that the information was captured, noted, or recorded as a memory candidate. "
     "Do not say or imply the information was remembered, will be remembered, saved, stored, committed, written to memory, permanently saved, or applied to long-term memory. "
+    "A memory candidate is only a candidate or staged proposal, not durable saved memory. "
+    "Acknowledge information without claiming persistence. "
+    "Do not claim information was saved, written, recorded, remembered, or permanently applied. "
     "When the user asks whether you know a person, answer yes only if the person is known from recent_messages, previous_track_analysis_saved, retrieved durable memory, or current_user_message context. "
     "If the person is not known, say clearly that you do not know who that person is yet, then invite context with strong respectful curiosity. "
     'Acceptable behavior in general terms: "I do not know who that is yet, but I am interested in understanding the context. Who are they to you?" '
@@ -233,6 +272,20 @@ STAGE2_SYSTEM_PROMPT = (
     "Empty memory_candidates must never be silent. "
     "A fail memory_update_extraction status is diagnostic only; it is not a CLI, provider, or application failure. "
     "final_answer should still be produced normally. "
+    "Do not claim information was saved, written, recorded, remembered, or permanently applied. "
+    "A memory candidate is only a candidate or staged proposal, not durable saved memory. "
+    "Acknowledge information without claiming persistence. "
+    "Do not omit, sanitize, moralize, or euphemize sensitive life context when the user explicitly provides it and it is relevant to understanding the person, situation, relationship, income, work history, constraints, risks, or social context. "
+    "This includes stigmatized or sensitive work such as sex work. "
+    "If the user says that someone worked as a prostitute, normalize and represent it neutrally as sex work or prostitution, depending on the user's wording and the required fidelity of the output. "
+    "Treat it as occupational, financial, biographical, or social context when that is how the user presents it. "
+    "Do not treat the mere mention of prostitution or sex work as criminal, abusive, exploitative, explicit sexual content, or unsafe. "
+    "Do not infer trafficking, coercion, exploitation, trauma, criminality, promiscuity, moral failure, victimhood, or risk unless the user explicitly states it or the immediate context clearly supports it. "
+    "Do not erase the fact because it is sensitive. "
+    'Do not replace it with vague wording such as "a difficult past", "questionable work", "adult lifestyle", or "sensitive background" if the specific work is important for understanding. '
+    "Preserve the user's framing when relevant: if the user frames it as work or income, represent it as work or income. If the user frames it as exploitation or harm, preserve that framing. If the user's framing is neutral, keep it neutral. "
+    "Only avoid or soften the term when the user asks for softer wording, when the target audience requires it, or when the output field is meant to be user-facing and a neutral broader term such as sex work is more appropriate. "
+    "For internal memory or normalized meaning, do not lose the specific fact. "
     "Sensitive does not mean forbidden. "
     "Do not moralize, sanitize, euphemize away, or discard user-provided life context. "
     "If it changes understanding of the past, present, or future and fits the memory candidate schema, extract it neutrally. "
@@ -362,7 +415,7 @@ class OpenAICompatibleLLMProvider(LLMAdapter):
         """Ask the provider for a structured Stage 0 NLU frame."""
 
         content = self._request_decision(STAGE0_NLU_SYSTEM_PROMPT, context)
-        return self._parse_decision(content, Stage0NLUFrame)
+        return self._parse_decision(content, Stage0NLUFrame, repair_stage0=True)
 
     def decide_stage2(self, stage2_context: dict[str, Any]) -> Stage2Decision:
         """Ask the provider for a structured Stage 2 final decision."""
@@ -402,14 +455,42 @@ class OpenAICompatibleLLMProvider(LLMAdapter):
             raise ProviderResponseError("LLM provider message content must be a non-empty JSON string")
         return content
 
-    def _parse_decision(self, content: str, model_type: type[DecisionModel]) -> DecisionModel:
+    def _parse_decision(
+        self,
+        content: str,
+        model_type: type[DecisionModel],
+        *,
+        repair_stage0: bool = False,
+    ) -> DecisionModel:
         try:
             payload = json.loads(content)
         except json.JSONDecodeError as error:
             raise ProviderResponseError("LLM provider returned invalid decision JSON") from error
         if not isinstance(payload, dict):
             raise ProviderResponseError("LLM provider decision JSON must be an object")
+        if repair_stage0 and model_type is Stage0NLUFrame:
+            payload = self._repair_stage0_dialogue_acts(payload)
         try:
             return model_type.model_validate(payload)
         except ValidationError as error:
             raise ProviderResponseError(f"LLM provider decision failed contract validation: {error}") from error
+
+    def _repair_stage0_dialogue_acts(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Normalize Stage 0 dialogue acts before strict contract validation."""
+
+        repaired = dict(payload)
+        raw_dialogue_acts = repaired.get("dialogue_acts")
+        if not isinstance(raw_dialogue_acts, list) or not all(isinstance(item, str) for item in raw_dialogue_acts):
+            repaired["dialogue_acts"] = ["other"]
+            return repaired
+
+        allowed_values = {act.value for act in Stage0DialogueAct}
+        normalized_dialogue_acts: list[str] = []
+        seen_values: set[str] = set()
+        for raw_act in raw_dialogue_acts:
+            candidate = raw_act if raw_act in allowed_values else Stage0DialogueAct.OTHER.value
+            if candidate not in seen_values:
+                seen_values.add(candidate)
+                normalized_dialogue_acts.append(candidate)
+        repaired["dialogue_acts"] = normalized_dialogue_acts or ["other"]
+        return repaired
