@@ -101,6 +101,11 @@ STAGE1_SYSTEM_PROMPT = (
     "If no memory-relevant update is extracted, memory_candidates must be empty, memory_update_extraction.status must be fail, and memory_update_extraction.reason must give a concrete reason. "
     'Use memory_update_extraction.status="ok" only when memory_candidates is non-empty. '
     'Use memory_update_extraction.status="fail" when memory_candidates is empty, and explain why in memory_update_extraction.reason. '
+    "memory_update_extraction.reason is always required. "
+    "memory_update_extraction.reason must be a non-empty string. "
+    "Never return an empty string for memory_update_extraction.reason. "
+    "When memory_candidates is non-empty and status=\"ok\", memory_update_extraction.reason must briefly say what was extracted. "
+    "When memory_candidates is empty and status=\"fail\", memory_update_extraction.reason must briefly say why no memory-relevant update was extracted. "
     "Empty memory_candidates must never be silent. "
     "A fail memory_update_extraction status is diagnostic only; it is not a CLI, provider, or application failure. "
     "draft_answer should still be produced normally when decision_type is answer_directly. "
@@ -210,6 +215,11 @@ STAGE2_SYSTEM_PROMPT = (
     "If no memory-relevant update is extracted, memory_candidates must be empty, memory_update_extraction.status must be fail, and memory_update_extraction.reason must give a concrete reason. "
     'Use memory_update_extraction.status="ok" only when memory_candidates is non-empty. '
     'Use memory_update_extraction.status="fail" when memory_candidates is empty, and explain why in memory_update_extraction.reason. '
+    "memory_update_extraction.reason is always required. "
+    "memory_update_extraction.reason must be a non-empty string. "
+    "Never return an empty string for memory_update_extraction.reason. "
+    "When memory_candidates is non-empty and status=\"ok\", memory_update_extraction.reason must briefly say what was extracted. "
+    "When memory_candidates is empty and status=\"fail\", memory_update_extraction.reason must briefly say why no memory-relevant update was extracted. "
     "Empty memory_candidates must never be silent. "
     "A fail memory_update_extraction status is diagnostic only; it is not a CLI, provider, or application failure. "
     "final_answer should still be produced normally. "
