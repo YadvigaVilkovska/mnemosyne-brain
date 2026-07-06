@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mnemosyne_brain.app.cli import llm_env_is_configured, main
-from mnemosyne_brain.app.llm_provider import ProviderResponseError
+from mnemosyne_brain.app.llm_provider import OpenAICompatibleLLMProvider, ProviderResponseError
 
 
 class CliTestCase(unittest.TestCase):
@@ -819,6 +819,228 @@ class CliTestCase(unittest.TestCase):
             self.assertEqual(0, self._count_rows(db_path, "memory_items"))
             self.assertEqual(0, self._count_rows(db_path, "memory_staging"))
 
+    def test_five_turn_memory_candidate_regression_is_deterministic(self) -> None:
+        scenarios = {
+            "ты знаешь алену?": {
+                "answer": "I do not know Alena yet. Who is she to you?",
+                "stage1_candidates": [],
+                "stage1_facts": [],
+                "stage1_reason": "No durable update yet; this is a request for context.",
+            },
+            "я тебе про нее не рассказывал, вспоминай": {
+                "answer": "You are referring to the previously mentioned person, but I still need the context of who she is.",
+                "stage1_candidates": [],
+                "stage1_facts": [],
+                "stage1_reason": "No durable update yet; this is a request to recall context.",
+            },
+            "а что если я тебе скажу что ее рабочее имя Екатерина?": {
+                "answer": "Got it. You are saying her working name is Ekaterina. Is that the same person you mean?",
+                "stage1_candidates": [],
+                "stage1_facts": [],
+                "stage1_reason": "No durable update; this is a clarification about the previously mentioned person.",
+            },
+            "она моя любовница, но когда была проституткой ее рабочее имя было Екатерина": {
+                "answer": "Understood. You are saying the previously mentioned person is your lover, and that her working name was Ekaterina when she did sex work.",
+                "stage1_candidates": [
+                    {
+                        "candidate_type": "relation",
+                        "content": {
+                            "subject": "user",
+                            "relation": "lover",
+                            "object": "previously mentioned person",
+                            "subject_ref": "same_person",
+                        },
+                        "recommended_action": "stage",
+                        "confidence": 0.8,
+                    },
+                    {
+                        "candidate_type": "fact",
+                        "content": {
+                            "text": "The previously mentioned person did sex work.",
+                            "subject_ref": "same_person",
+                            "claim_status": "user_reported",
+                            "sensitivity": "high",
+                            "context_type": "biographical_context",
+                        },
+                        "recommended_action": "stage",
+                        "confidence": 0.6,
+                    },
+                    {
+                        "candidate_type": "name_alias",
+                        "content": {
+                            "raw_name": "Екатерина",
+                            "subject_ref": "same_person",
+                        },
+                        "recommended_action": "stage",
+                        "confidence": 0.8,
+                    },
+                ],
+                "stage1_facts": [
+                    {"fact": "The previously mentioned person is the user's lover."},
+                    {"fact": "The previously mentioned person did sex work."},
+                    {"fact": "The previously mentioned person used the working name Ekaterina."},
+                ],
+                "stage1_reason": "Extracted relationship, sensitive biographical context, and alias information for the same person.",
+            },
+            "я тебе уже ответил, посмотри": {
+                "answer": "Right, you already answered. I will use the previous context you gave me.",
+                "stage1_candidates": [],
+                "stage1_facts": [],
+                "stage1_reason": "No new durable update; this is a reminder to use prior context.",
+            },
+        }
+
+        class RegressionTransport:
+            """Deterministic transport that repairs Stage 0 and serves scenario-specific Stage 1 answers."""
+
+            def __init__(self) -> None:
+                self.requests: list[dict] = []
+                self.stage1_contexts: list[dict] = []
+
+            def post_json(
+                self,
+                *,
+                url: str,
+                headers: dict[str, str],
+                payload: dict[str, object],
+                timeout_seconds: float,
+            ) -> dict[str, object]:
+                del url, headers, timeout_seconds
+                self.requests.append(payload)
+                system_prompt = str(payload["messages"][0]["content"])
+                user_context = json.loads(str(payload["messages"][1]["content"]))
+                current_user_message = user_context["current_user_message"]
+                if "Stage 1" in system_prompt:
+                    stage0_frame = user_context["stage0_nlu_frame"]
+                    if stage0_frame["dialogue_acts"] != ["other"]:
+                        raise AssertionError(f"Stage 0 dialogue acts were not repaired: {stage0_frame['dialogue_acts']}")
+                    self.stage1_contexts.append(user_context)
+                    scenario = scenarios[current_user_message]
+                    memory_candidates = scenario["stage1_candidates"]
+                    has_candidates = bool(memory_candidates)
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(
+                                        {
+                                            "schema_version": "0.4.3",
+                                            "decision_type": "answer_directly",
+                                            "selected_memory_ids": [],
+                                            "draft_answer": scenario["answer"],
+                                            "extracted_facts": scenario["stage1_facts"],
+                                            "memory_candidates": memory_candidates,
+                                            "memory_update_extraction": {
+                                                "status": "ok" if has_candidates else "fail",
+                                                "reason": scenario["stage1_reason"],
+                                            },
+                                            "rationale": "Deterministic regression scenario.",
+                                        },
+                                        ensure_ascii=False,
+                                    )
+                                }
+                            }
+                        ]
+                    }
+                if "Stage 0" in system_prompt:
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(
+                                        {
+                                            "schema_version": "stage0_nlu_frame.v1",
+                                            "normalized_intent": f"Normalized: {current_user_message}",
+                                            "dialogue_acts": ["statement"],
+                                            "entities": [],
+                                            "current_signal": {
+                                                "status": "clear",
+                                                "kind": "other",
+                                                "summary": "Context is present in the current message.",
+                                                "needs_confirmation": False,
+                                            },
+                                            "clarification": {
+                                                "needed": False,
+                                                "question": "",
+                                            },
+                                            "memory_selection_hint": {
+                                                "needed": False,
+                                                "reason": "",
+                                                "query_terms": [],
+                                            },
+                                        },
+                                        ensure_ascii=False,
+                                    )
+                                }
+                            }
+                        ]
+                    }
+                raise AssertionError("Unexpected prompt stage")
+
+        transport = RegressionTransport()
+        provider = OpenAICompatibleLLMProvider(
+            base_url="https://llm.example.test/v1",
+            api_key="test_api_key",
+            model="test_model",
+            transport=transport,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "mnemosyne_cli_five_turn_regression.sqlite3")
+            with self._working_directory(temp_dir):
+                with patch(
+                    "mnemosyne_brain.app.cli.OpenAICompatibleLLMProvider.from_env",
+                    return_value=provider,
+                ):
+                    rendered_turns: list[str] = []
+                    for message in list(scenarios):
+                        exit_code, rendered = self._run_cli_args_with_env(
+                            ["--thread-id", "five-turn-regression", message],
+                            self._llm_env(db_path),
+                        )
+                        rendered_turns.append(rendered)
+                        self.assertEqual(0, exit_code, rendered)
+
+            turns = self._list_turns(db_path)
+            analysis_events = self._list_track_analysis_events(db_path)
+            candidates = self._list_memory_candidates(db_path)
+            memory_item_count = self._count_rows(db_path, "memory_items")
+            memory_staging_count = self._count_rows(db_path, "memory_staging")
+
+        self.assertEqual(10, len(turns))
+        self.assertEqual(5, len(analysis_events))
+        self.assertGreaterEqual(len(candidates), 3)
+        self.assertEqual(0, memory_item_count)
+        self.assertEqual(0, memory_staging_count)
+        self.assertTrue(any(candidate["candidate_type"] == "relation" for candidate in candidates))
+        self.assertTrue(any(candidate["candidate_type"] == "name_alias" for candidate in candidates))
+        self.assertTrue(
+            any(
+                candidate["candidate_type"] == "fact"
+                and candidate["content"].get("context_type") == "biographical_context"
+                and candidate["content"].get("subject_ref") == "same_person"
+                for candidate in candidates
+            )
+        )
+        turn4_candidates = [
+            candidate for candidate in candidates if candidate["turn_id"] == turns[6]["turn_id"]
+        ]
+        self.assertEqual(3, len(turn4_candidates))
+        self.assertTrue(
+            all(candidate["content"].get("subject_ref") == "same_person" for candidate in turn4_candidates)
+        )
+        self.assertIn("working name is Ekaterina", rendered_turns[2])
+        self.assertNotIn("who is she?", rendered_turns[2].lower())
+        self.assertIn("your lover", rendered_turns[3])
+        self.assertIn("working name was Ekaterina", rendered_turns[3])
+        self.assertNotIn("who is she?", rendered_turns[3].lower())
+        self.assertIn("already answered", rendered_turns[4].lower())
+        for rendered in rendered_turns:
+            self.assertNotIn("saved", rendered.lower())
+            self.assertNotIn("stored", rendered.lower())
+            self.assertNotIn("remembered", rendered.lower())
+            self.assertNotIn("permanently applied", rendered.lower())
+
     def test_no_real_network_call_in_llm_tests(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             with self._patched_llm_path({"answer": "No network answer."}) as calls:
@@ -849,7 +1071,7 @@ class CliTestCase(unittest.TestCase):
         try:
             return connection.execute(
                 """
-                SELECT input_source, role, content_text, track_id
+                SELECT turn_id, input_source, role, content_text, track_id
                 FROM dialogue_turns
                 ORDER BY created_at, turn_id
                 """
@@ -889,7 +1111,7 @@ class CliTestCase(unittest.TestCase):
         try:
             rows = connection.execute(
                 """
-                SELECT candidate_type, recommended_action, confidence, content_json, provenance_json, track_id
+                SELECT candidate_type, recommended_action, confidence, content_json, provenance_json, track_id, turn_id
                 FROM memory_candidates
                 ORDER BY rowid
                 """
@@ -902,6 +1124,7 @@ class CliTestCase(unittest.TestCase):
                     "content": json.loads(row["content_json"]),
                     "provenance": json.loads(row["provenance_json"]),
                     "track_id": row["track_id"],
+                    "turn_id": row["turn_id"],
                 }
                 for row in rows
             ]
