@@ -125,7 +125,7 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
             return any(self._contains_key(item, key) for item in value)
         return False
 
-    def _news_extraction_for(self, memory_candidates: list[dict] | None = None) -> dict:
+    def _memory_update_extraction_for(self, memory_candidates: list[dict] | None = None) -> dict:
         candidates = memory_candidates or []
         return {
             "status": "ok" if candidates else "fail",
@@ -133,11 +133,11 @@ class DeterministicLLMOrchestratorTestCase(unittest.TestCase):
         }
 
     def _stage1_decision(self, **kwargs: Any) -> Stage1Decision:
-        kwargs.setdefault("news_extraction", self._news_extraction_for(kwargs.get("memory_candidates")))
+        kwargs.setdefault("memory_update_extraction", self._memory_update_extraction_for(kwargs.get("memory_candidates")))
         return Stage1Decision(**kwargs)
 
     def _stage2_decision(self, **kwargs: Any) -> Stage2Decision:
-        kwargs.setdefault("news_extraction", self._news_extraction_for(kwargs.get("memory_candidates")))
+        kwargs.setdefault("memory_update_extraction", self._memory_update_extraction_for(kwargs.get("memory_candidates")))
         return Stage2Decision(**kwargs)
 
     def test_answer_directly_returns_draft_answer_and_does_not_call_stage2(self) -> None:

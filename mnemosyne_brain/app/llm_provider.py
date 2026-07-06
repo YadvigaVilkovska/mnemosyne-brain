@@ -81,17 +81,13 @@ STAGE1_SYSTEM_PROMPT = (
     '"draft_answer":null,'
     '"extracted_facts":[],'
     '"memory_candidates":[],'
-    '"news_extraction":{"status":"ok|fail","reason":"short diagnostic reason"},'
+    '"memory_update_extraction":{"status":"ok|fail","reason":"short diagnostic reason"},'
     '"rationale":null}. '
-    "Every Stage 1 response must include news_extraction. "
-    'In this system, "news_extraction" is a technical field name. '
-    'A "news item" is not public news, media news, gossip, novelty, or an emotionally interesting detail. '
-    'A "news item" means a memory-relevant update from current_user_message. '
-    "A memory-relevant update is information that changes Brain's useful understanding of reality. "
-    "It can change understanding of the past, understanding of the present, expectations about the future, understanding of a person, understanding of a relationship, understanding of identity, names, aliases, roles, or status, understanding of preferences, habits, constraints, plans, risks, obligations, or recurring situations, or understanding of previous memory including corrections, confirmations, denials, or added context. "
-    "A message contains a news item when it adds, corrects, confirms, denies, or contextualizes memory-relevant information. "
-    'A message does not contain a news item when it only asks a question without adding memory-relevant information, asks the assistant to remember, search, or recall, repeats already known context without changing it, expresses emotion without adding durable context, gives a one-off command without durable context, contains only small talk or meta-chat, or contains only "yes", "no", "ok", or similar without resolvable durable meaning. '
-    "If a message contains both non-news content and a news item, extract the news item. "
+    "Every Stage 1 response must include memory_update_extraction. "
+    "A memory update is information from current_user_message that changes Brain's useful understanding of the past, present, or future. "
+    "It may change understanding of the user, another person, a relationship, identity, name, alias, role, or status, preference, habit, boundary, or recurring pattern, plan, intention, obligation, constraint, or deadline, past life context, present situation, future expectation, trust, risk, conflict, closeness, dependency, or social context, or previous memory through correction, confirmation, denial, or added context. "
+    "Extract a memory update when current_user_message adds, corrects, confirms, denies, or contextualizes memory-relevant information. "
+    'Do not extract when current_user_message only asks a question without adding memory-relevant information, asks the assistant to remember, search, or recall, repeats already known context without changing it, expresses emotion without durable context, gives a one-off command without durable context, contains only small talk or meta-chat, or contains only "yes", "no", "ok", or similar without resolvable durable meaning. '
     "Extract all distinct memory-relevant updates from current_user_message. "
     "Do not stop after finding one update. "
     "A single message or sentence may contain multiple memory-relevant updates. "
@@ -99,16 +95,20 @@ STAGE1_SYSTEM_PROMPT = (
     "Do not merge separate updates into one broad summary when doing so would lose useful detail. "
     "Merge information only when the pieces are inseparable parts of the same update and separating them would create artificial fragments. "
     "Prefer complete coverage of meaningful updates over brevity. "
-    "Still apply the relevance filter and exclude filler, repetitions, decorative details, and low-value noise. "
-    "If at least one news item or memory-relevant update is extracted, memory_candidates must be non-empty and news_extraction.status must be ok. "
-    "If no news item or memory-relevant update is extracted, memory_candidates must be empty, news_extraction.status must be fail, and news_extraction.reason must give a concrete reason. "
-    'Use news_extraction.status="ok" only when memory_candidates is non-empty. '
-    'Use news_extraction.status="fail" when memory_candidates is empty, and explain why in news_extraction.reason. '
+    "Exclude filler, repetitions, decorative details, and low-value noise. "
+    "If at least one memory-relevant update is extracted, memory_candidates must be non-empty and memory_update_extraction.status must be ok. "
+    "If no memory-relevant update is extracted, memory_candidates must be empty, memory_update_extraction.status must be fail, and memory_update_extraction.reason must give a concrete reason. "
+    'Use memory_update_extraction.status="ok" only when memory_candidates is non-empty. '
+    'Use memory_update_extraction.status="fail" when memory_candidates is empty, and explain why in memory_update_extraction.reason. '
     "Empty memory_candidates must never be silent. "
-    "A fail news_extraction status is diagnostic only; it is not a CLI, provider, or application failure. "
+    "A fail memory_update_extraction status is diagnostic only; it is not a CLI, provider, or application failure. "
     "draft_answer should still be produced normally when decision_type is answer_directly. "
-    "Sensitive adult or private life context is not forbidden and must not be discarded if it is extractable. "
-    'Credentials and secrets must not be stored as ordinary memory; if unsafe to store, use memory_candidates=[] and news_extraction.status="fail" with reason. '
+    "Sensitive does not mean forbidden. "
+    "Do not moralize, sanitize, euphemize away, or discard user-provided life context. "
+    "If it changes understanding of the past, present, or future and fits the memory candidate schema, extract it neutrally. "
+    "Preserve provenance as user-reported where the schema supports it. "
+    "Passwords, bank keys, API tokens, seed phrases, and similar secrets are not ordinary memory updates. "
+    'Do not store them as ordinary memory. If unsafe to store with the existing schema, return memory_candidates=[] and memory_update_extraction.status="fail" with a concrete reason. '
     "If stage0_nlu_frame is present, use normalized_intent as the primary interpretation of current_user_message. "
     "Answer normalized intent, not just surface wording. "
     "Use dialogue_acts and new_information from stage0_nlu_frame to decide whether to answer, clarify, or emit candidates. "
@@ -189,18 +189,14 @@ STAGE2_SYSTEM_PROMPT = (
     '"final_answer":"",'
     '"extracted_facts":[],'
     '"memory_candidates":[],'
-    '"news_extraction":{"status":"ok|fail","reason":"short diagnostic reason"},'
+    '"memory_update_extraction":{"status":"ok|fail","reason":"short diagnostic reason"},'
     '"used_memory_ids":[],'
     '"rationale":null}. '
-    "Every Stage 2 response must include news_extraction. "
-    'In this system, "news_extraction" is a technical field name. '
-    'A "news item" is not public news, media news, gossip, novelty, or an emotionally interesting detail. '
-    'A "news item" means a memory-relevant update from current_user_message. '
-    "A memory-relevant update is information that changes Brain's useful understanding of reality. "
-    "It can change understanding of the past, understanding of the present, expectations about the future, understanding of a person, understanding of a relationship, understanding of identity, names, aliases, roles, or status, understanding of preferences, habits, constraints, plans, risks, obligations, or recurring situations, or understanding of previous memory including corrections, confirmations, denials, or added context. "
-    "A message contains a news item when it adds, corrects, confirms, denies, or contextualizes memory-relevant information. "
-    'A message does not contain a news item when it only asks a question without adding memory-relevant information, asks the assistant to remember, search, or recall, repeats already known context without changing it, expresses emotion without adding durable context, gives a one-off command without durable context, contains only small talk or meta-chat, or contains only "yes", "no", "ok", or similar without resolvable durable meaning. '
-    "If a message contains both non-news content and a news item, extract the news item. "
+    "Every Stage 2 response must include memory_update_extraction. "
+    "A memory update is information from current_user_message that changes Brain's useful understanding of the past, present, or future. "
+    "It may change understanding of the user, another person, a relationship, identity, name, alias, role, or status, preference, habit, boundary, or recurring pattern, plan, intention, obligation, constraint, or deadline, past life context, present situation, future expectation, trust, risk, conflict, closeness, dependency, or social context, or previous memory through correction, confirmation, denial, or added context. "
+    "Extract a memory update when current_user_message adds, corrects, confirms, denies, or contextualizes memory-relevant information. "
+    'Do not extract when current_user_message only asks a question without adding memory-relevant information, asks the assistant to remember, search, or recall, repeats already known context without changing it, expresses emotion without durable context, gives a one-off command without durable context, contains only small talk or meta-chat, or contains only "yes", "no", "ok", or similar without resolvable durable meaning. '
     "Extract all distinct memory-relevant updates from current_user_message. "
     "Do not stop after finding one update. "
     "A single message or sentence may contain multiple memory-relevant updates. "
@@ -208,16 +204,20 @@ STAGE2_SYSTEM_PROMPT = (
     "Do not merge separate updates into one broad summary when doing so would lose useful detail. "
     "Merge information only when the pieces are inseparable parts of the same update and separating them would create artificial fragments. "
     "Prefer complete coverage of meaningful updates over brevity. "
-    "Still apply the relevance filter and exclude filler, repetitions, decorative details, and low-value noise. "
-    "If at least one news item or memory-relevant update is extracted, memory_candidates must be non-empty and news_extraction.status must be ok. "
-    "If no news item or memory-relevant update is extracted, memory_candidates must be empty, news_extraction.status must be fail, and news_extraction.reason must give a concrete reason. "
-    'Use news_extraction.status="ok" only when memory_candidates is non-empty. '
-    'Use news_extraction.status="fail" when memory_candidates is empty, and explain why in news_extraction.reason. '
+    "Exclude filler, repetitions, decorative details, and low-value noise. "
+    "If at least one memory-relevant update is extracted, memory_candidates must be non-empty and memory_update_extraction.status must be ok. "
+    "If no memory-relevant update is extracted, memory_candidates must be empty, memory_update_extraction.status must be fail, and memory_update_extraction.reason must give a concrete reason. "
+    'Use memory_update_extraction.status="ok" only when memory_candidates is non-empty. '
+    'Use memory_update_extraction.status="fail" when memory_candidates is empty, and explain why in memory_update_extraction.reason. '
     "Empty memory_candidates must never be silent. "
-    "A fail news_extraction status is diagnostic only; it is not a CLI, provider, or application failure. "
+    "A fail memory_update_extraction status is diagnostic only; it is not a CLI, provider, or application failure. "
     "final_answer should still be produced normally. "
-    "Sensitive adult or private life context is not forbidden and must not be discarded if it is extractable. "
-    'Credentials and secrets must not be stored as ordinary memory; if unsafe to store, use memory_candidates=[] and news_extraction.status="fail" with reason. '
+    "Sensitive does not mean forbidden. "
+    "Do not moralize, sanitize, euphemize away, or discard user-provided life context. "
+    "If it changes understanding of the past, present, or future and fits the memory candidate schema, extract it neutrally. "
+    "Preserve provenance as user-reported where the schema supports it. "
+    "Passwords, bank keys, API tokens, seed phrases, and similar secrets are not ordinary memory updates. "
+    'Do not store them as ordinary memory. If unsafe to store with the existing schema, return memory_candidates=[] and memory_update_extraction.status="fail" with a concrete reason. '
     "Put the final user-facing answer in final_answer."
 )
 

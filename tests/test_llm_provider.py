@@ -92,7 +92,7 @@ class LLMProviderTestCase(unittest.TestCase):
                 "decision_type": "answer_directly",
                 "draft_answer": "Done.",
                 "memory_candidates": candidates,
-                "news_extraction": {
+                "memory_update_extraction": {
                     "status": "ok" if candidates else "fail",
                     "reason": "Durable information extracted." if candidates else "No durable information extracted.",
                 },
@@ -106,7 +106,7 @@ class LLMProviderTestCase(unittest.TestCase):
                 "schema_version": "0.4.3",
                 "final_answer": "Done.",
                 "memory_candidates": candidates,
-                "news_extraction": {
+                "memory_update_extraction": {
                     "status": "ok" if candidates else "fail",
                     "reason": "Durable information extracted." if candidates else "No durable information extracted.",
                 },
@@ -128,7 +128,7 @@ class LLMProviderTestCase(unittest.TestCase):
                     "decision_type": "answer_directly",
                     "draft_answer": "Already enough context.",
                     "memory_candidates": [],
-                    "news_extraction": {
+                    "memory_update_extraction": {
                         "status": "fail",
                         "reason": "No durable information extracted.",
                     },
@@ -197,29 +197,27 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn('never use request_memory', prompt)
         self.assertIn("recent_messages and answer_directly", prompt)
 
-    def test_stage1_prompt_requires_news_extraction_status(self) -> None:
+    def test_stage1_prompt_requires_memory_update_extraction_status(self) -> None:
         provider, transport = self._provider(self._stage1_response())
         provider.decide_stage1({"stage": "stage1"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
-        self.assertIn("Every Stage 1 response must include news_extraction", prompt)
-        self.assertIn('"news_extraction" is a technical field name', prompt)
-        self.assertIn("not public news", prompt)
-        self.assertIn("memory-relevant update", prompt)
-        self.assertIn("changes Brain's useful understanding of reality", prompt)
+        self.assertIn("Every Stage 1 response must include memory_update_extraction", prompt)
+        self.assertIn("A memory update is information", prompt)
+        self.assertIn("changes Brain's useful understanding of the past, present, or future", prompt)
         self.assertIn("understanding of the past", prompt)
-        self.assertIn("understanding of the present", prompt)
-        self.assertIn("expectations about the future", prompt)
+        self.assertIn("present situation", prompt)
+        self.assertIn("future expectation", prompt)
         self.assertIn("Extract all distinct memory-relevant updates", prompt)
         self.assertIn("Do not stop after finding one update", prompt)
         self.assertIn("separate memory candidate", prompt)
-        self.assertIn("exclude filler, repetitions, decorative details, and low-value noise", prompt)
-        self.assertIn('news_extraction.status="ok" only when memory_candidates is non-empty', prompt)
-        self.assertIn('news_extraction.status="fail" when memory_candidates is empty', prompt)
+        self.assertIn("Exclude filler, repetitions, decorative details, and low-value noise", prompt)
+        self.assertIn('memory_update_extraction.status="ok" only when memory_candidates is non-empty', prompt)
+        self.assertIn('memory_update_extraction.status="fail" when memory_candidates is empty', prompt)
         self.assertIn("Empty memory_candidates must never be silent", prompt)
         self.assertIn("diagnostic only; it is not a CLI, provider, or application failure", prompt)
         self.assertIn("draft_answer should still be produced normally", prompt)
-        self.assertIn("Sensitive adult or private life context is not forbidden", prompt)
-        self.assertIn("Credentials and secrets must not be stored as ordinary memory", prompt)
+        self.assertIn("Sensitive does not mean forbidden", prompt)
+        self.assertIn("Passwords, bank keys, API tokens, seed phrases, and similar secrets are not ordinary memory updates", prompt)
 
     def test_stage0_prompt_contains_nlu_frame_guidance(self) -> None:
         provider, transport = self._provider(
@@ -490,7 +488,7 @@ class LLMProviderTestCase(unittest.TestCase):
                     "schema_version": "0.4.3",
                     "final_answer": "Provider returned a final answer.",
                     "memory_candidates": [],
-                    "news_extraction": {
+                    "memory_update_extraction": {
                         "status": "fail",
                         "reason": "No durable information extracted.",
                     },
@@ -512,29 +510,27 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertIn('"schema_version":"0.4.3"', prompt)
         self.assertIn("final_answer", prompt)
 
-    def test_stage2_prompt_requires_news_extraction_status(self) -> None:
+    def test_stage2_prompt_requires_memory_update_extraction_status(self) -> None:
         provider, transport = self._provider(self._stage2_response())
         provider.decide_stage2({"stage": "stage2"})
         prompt = transport.calls[0]["payload"]["messages"][0]["content"]
-        self.assertIn("Every Stage 2 response must include news_extraction", prompt)
-        self.assertIn('"news_extraction" is a technical field name', prompt)
-        self.assertIn("not public news", prompt)
-        self.assertIn("memory-relevant update", prompt)
-        self.assertIn("changes Brain's useful understanding of reality", prompt)
+        self.assertIn("Every Stage 2 response must include memory_update_extraction", prompt)
+        self.assertIn("A memory update is information", prompt)
+        self.assertIn("changes Brain's useful understanding of the past, present, or future", prompt)
         self.assertIn("understanding of the past", prompt)
-        self.assertIn("understanding of the present", prompt)
-        self.assertIn("expectations about the future", prompt)
+        self.assertIn("present situation", prompt)
+        self.assertIn("future expectation", prompt)
         self.assertIn("Extract all distinct memory-relevant updates", prompt)
         self.assertIn("Do not stop after finding one update", prompt)
         self.assertIn("separate memory candidate", prompt)
-        self.assertIn("exclude filler, repetitions, decorative details, and low-value noise", prompt)
-        self.assertIn('news_extraction.status="ok" only when memory_candidates is non-empty', prompt)
-        self.assertIn('news_extraction.status="fail" when memory_candidates is empty', prompt)
+        self.assertIn("Exclude filler, repetitions, decorative details, and low-value noise", prompt)
+        self.assertIn('memory_update_extraction.status="ok" only when memory_candidates is non-empty', prompt)
+        self.assertIn('memory_update_extraction.status="fail" when memory_candidates is empty', prompt)
         self.assertIn("Empty memory_candidates must never be silent", prompt)
         self.assertIn("diagnostic only; it is not a CLI, provider, or application failure", prompt)
         self.assertIn("final_answer should still be produced normally", prompt)
-        self.assertIn("Sensitive adult or private life context is not forbidden", prompt)
-        self.assertIn("Credentials and secrets must not be stored as ordinary memory", prompt)
+        self.assertIn("Sensitive does not mean forbidden", prompt)
+        self.assertIn("Passwords, bank keys, API tokens, seed phrases, and similar secrets are not ordinary memory updates", prompt)
 
     def test_stage0_response_with_draft_answer_fails(self) -> None:
         provider, _transport = self._provider(
