@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import field_validator, model_validator
 
@@ -39,6 +39,304 @@ class ExecutorFeedbackAnalysis(EphemeralAnalysisModel):
     event_id: str
     should_update_track: bool
     local_answer: str
+
+
+class PhaseV1ResolutionStatus(StrEnum):
+    """Allowed entity resolution outcomes for the Phase V1 signal layer."""
+
+    LITERAL = "literal"
+    RESOLVED = "resolved"
+    UNRESOLVED = "unresolved"
+    AMBIGUOUS = "ambiguous"
+
+
+class PhaseV1SignalPolarity(StrEnum):
+    """Allowed polarity values for Phase V1 information signals."""
+
+    ASSERTED = "asserted"
+    NEGATED = "negated"
+    QUESTIONED = "questioned"
+    HYPOTHETICAL = "hypothetical"
+    CORRECTED = "corrected"
+    UNCERTAIN = "uncertain"
+
+
+class PhaseV1EpistemicStatus(StrEnum):
+    """Allowed epistemic statuses for Phase V1 information signals."""
+
+    USER_CLAIM = "user_claim"
+    USER_QUESTION = "user_question"
+    USER_CORRECTION = "user_correction"
+    QUOTED_OR_REPORTED = "quoted_or_reported"
+    INSTRUCTION = "instruction"
+    USER_REACTION = "user_reaction"
+
+
+class PhaseV1Confidence(StrEnum):
+    """Allowed confidence values for Phase V1 analysis contracts."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class PhaseV1Entity(StrictContractModel):
+    """A mention or reference detected in the current user message."""
+
+    id: str
+    mention: str
+    entity_type: str
+    source_span: str
+    resolution_status: PhaseV1ResolutionStatus
+    resolved_to: str | None = None
+
+    @field_validator("id", "mention", "entity_type", "source_span")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        """Require non-empty text fields for Stage 0 entities."""
+
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("text fields must not be empty")
+        return stripped
+
+    @field_validator("resolved_to")
+    @classmethod
+    def validate_resolved_to(cls, value: str | None) -> str | None:
+        """Normalize optional entity resolution targets when provided."""
+
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("resolved_to must not be empty when provided")
+        return stripped
+
+
+class PhaseV1InformationSignal(StrictContractModel):
+    """A lightweight signal extracted from the current message."""
+
+    id: str
+    source_span: str
+    signal_type: str
+    about_entity_ids: list[str] = []
+    signal_scope: str
+    polarity: PhaseV1SignalPolarity
+    epistemic_status: PhaseV1EpistemicStatus
+    extraction_note: str | None = None
+
+    @field_validator("id", "source_span", "signal_type", "signal_scope")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        """Require non-empty text fields for signal extraction."""
+
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("text fields must not be empty")
+        return stripped
+
+    @field_validator("about_entity_ids")
+    @classmethod
+    def validate_about_entity_ids(cls, value: list[str]) -> list[str]:
+        """Keep entity references ordered and non-empty."""
+
+        cleaned: list[str] = []
+        for entity_id in value:
+            stripped = entity_id.strip()
+            if not stripped:
+                raise ValueError("about_entity_ids must not contain empty strings")
+            cleaned.append(stripped)
+        return cleaned
+
+    @field_validator("extraction_note")
+    @classmethod
+    def validate_extraction_note(cls, value: str | None) -> str | None:
+        """Allow a short explanation without deeper interpretation."""
+
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("extraction_note must not be empty when provided")
+        return stripped
+
+
+class PhaseV1CandidateFact(StrictContractModel):
+    """An interpreted claim that may later become memory-worthy."""
+
+    id: str
+    claim: str
+    about_entity_ids: list[str] = []
+    source_turn_ids: list[str] = []
+    source_signal_ids: list[str] = []
+    polarity: Literal["asserted", "negated", "corrected", "uncertain"]
+    confidence: PhaseV1Confidence
+
+    @field_validator("id", "claim")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        """Require non-empty fact identifiers and claims."""
+
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("text fields must not be empty")
+        return stripped
+
+    @field_validator("about_entity_ids", "source_turn_ids", "source_signal_ids")
+    @classmethod
+    def validate_reference_lists(cls, value: list[str]) -> list[str]:
+        """Keep provenance references ordered and non-empty when provided."""
+
+        cleaned: list[str] = []
+        for reference_id in value:
+            stripped = reference_id.strip()
+            if not stripped:
+                raise ValueError("reference ids must not contain empty strings")
+            cleaned.append(stripped)
+        return cleaned
+
+
+class PhaseV1CandidateMemoryItem(StrictContractModel):
+    """A proposed durable-memory item derived from candidate facts."""
+
+    id: str
+    memory_type: str
+    proposed_content: str
+    about_entity_ids: list[str] = []
+    source_turn_ids: list[str] = []
+    source_signal_ids: list[str] = []
+    reason_for_candidate: str
+    confidence: PhaseV1Confidence
+
+    @field_validator("id", "memory_type", "proposed_content", "reason_for_candidate")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        """Require non-empty memory item text fields."""
+
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("text fields must not be empty")
+        return stripped
+
+    @field_validator("about_entity_ids", "source_turn_ids", "source_signal_ids")
+    @classmethod
+    def validate_reference_lists(cls, value: list[str]) -> list[str]:
+        """Keep provenance references ordered and non-empty when provided."""
+
+        cleaned: list[str] = []
+        for reference_id in value:
+            stripped = reference_id.strip()
+            if not stripped:
+                raise ValueError("reference ids must not contain empty strings")
+            cleaned.append(stripped)
+        return cleaned
+
+
+class PhaseV1DoNotSave(StrictContractModel):
+    """A recorded reason that some extracted content must not be saved."""
+
+    id: str
+    content: str
+    reason: str
+    source_turn_ids: list[str] = []
+    source_signal_ids: list[str] = []
+    confidence: PhaseV1Confidence
+
+    @field_validator("id", "content", "reason")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        """Require non-empty audit text for do-not-save records."""
+
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("text fields must not be empty")
+        return stripped
+
+    @field_validator("source_turn_ids", "source_signal_ids")
+    @classmethod
+    def validate_reference_lists(cls, value: list[str]) -> list[str]:
+        """Keep provenance references ordered and non-empty when provided."""
+
+        cleaned: list[str] = []
+        for reference_id in value:
+            stripped = reference_id.strip()
+            if not stripped:
+                raise ValueError("reference ids must not contain empty strings")
+            cleaned.append(stripped)
+        return cleaned
+
+
+class PhaseV1Stage0SignalExtraction(StrictContractModel):
+    """Stage 0 output for current-message signal extraction."""
+
+    entities: list[PhaseV1Entity] = []
+    information_signals: list[PhaseV1InformationSignal] = []
+    unresolved_references: list[dict[str, Any]] = []
+    ambiguous_references: list[dict[str, Any]] = []
+
+
+class PhaseV1SegmentAnalysis(StrictContractModel):
+    """Segment-level analysis over turns and Stage 0 signal extraction."""
+
+    segment_summary: str
+    entities_in_segment: list[PhaseV1Entity] = []
+    interpreted_signals: list[PhaseV1InformationSignal] = []
+    candidate_facts: list[PhaseV1CandidateFact] = []
+    candidate_corrections: list[dict[str, Any]] = []
+    candidate_conflicts: list[dict[str, Any]] = []
+    candidate_memory_items: list[PhaseV1CandidateMemoryItem] = []
+    open_questions: list[dict[str, Any]] = []
+    do_not_save: list[PhaseV1DoNotSave] = []
+    confidence: PhaseV1Confidence
+
+    @field_validator("segment_summary")
+    @classmethod
+    def validate_segment_summary(cls, value: str) -> str:
+        """Require a non-empty summary for segment analysis."""
+
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("segment_summary must not be empty")
+        return stripped
+
+
+class PhaseV1MemoryDecisionItem(StrictContractModel):
+    """A single durable-memory gate decision for one candidate."""
+
+    candidate_id: str
+    decision: Literal["save", "skip", "update", "conflict", "ask"]
+    target_memory_id: str | None = None
+    reason: str
+    final_content: dict[str, Any] | str | None = None
+    confidence: PhaseV1Confidence
+
+    @field_validator("candidate_id", "reason")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        """Require a non-empty candidate id and decision reason."""
+
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("text fields must not be empty")
+        return stripped
+
+    @field_validator("target_memory_id")
+    @classmethod
+    def validate_target_memory_id(cls, value: str | None) -> str | None:
+        """Normalize optional target memory references."""
+
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("target_memory_id must not be empty when provided")
+        return stripped
+
+
+class PhaseV1MemoryDecision(StrictContractModel):
+    """The only layer allowed to choose durable-memory outcomes."""
+
+    decisions: list[PhaseV1MemoryDecisionItem] = []
 
 
 class MemoryUpdateExtraction(StrictContractModel):
